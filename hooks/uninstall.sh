@@ -6,6 +6,7 @@ SCOPE="${1:---user}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFLIGHT="$SCRIPT_DIR/preflight.py"
 POSTCHECK="$SCRIPT_DIR/postcheck.py"
+STOPREPORT="$SCRIPT_DIR/session-report.py"
 
 case "$SCOPE" in
   --user)    SETTINGS="$HOME/.claude/settings.json" ;;
@@ -22,12 +23,16 @@ echo "Backup saved: $BACKUP"
 PRE_CMD="python3 $PREFLIGHT"
 POST_CMD="python3 $POSTCHECK"
 
-jq --arg pre "$PRE_CMD" --arg post "$POST_CMD" '
+STOP_CMD="python3 $STOPREPORT"
+
+jq --arg pre "$PRE_CMD" --arg post "$POST_CMD" --arg stop "$STOP_CMD" '
   def rm_hook(section; cmd):
     if .hooks[section] then
       .hooks[section] = [.hooks[section][] | select(.hooks[]?.command != cmd)]
     else . end;
-  . | rm_hook("PreToolUse"; $pre) | rm_hook("PostToolUse"; $post)
+  . | rm_hook("PreToolUse"; $pre)
+    | rm_hook("PostToolUse"; $post)
+    | rm_hook("Stop"; $stop)
 ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
 
 # ── Remove skill ──────────────────────────────────────────────────────────────

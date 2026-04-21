@@ -6,6 +6,7 @@ SCOPE="${1:---user}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFLIGHT="$SCRIPT_DIR/preflight.py"
 POSTCHECK="$SCRIPT_DIR/postcheck.py"
+STOPREPORT="$SCRIPT_DIR/session-report.py"
 
 # Detect platform and resolve settings path
 _detect_settings_path() {
@@ -43,10 +44,11 @@ python3 --version >/dev/null 2>&1 || { echo "ERROR: python3 not found in PATH"; 
 jq --version      >/dev/null 2>&1 || { echo "ERROR: jq not found in PATH — install with: brew install jq / apt install jq"; exit 1; }
 
 # ── Validate hook scripts exist ───────────────────────────────────────────────
-[[ -f "$PREFLIGHT" ]] || { echo "ERROR: $PREFLIGHT not found"; exit 1; }
-[[ -f "$POSTCHECK" ]] || { echo "ERROR: $POSTCHECK not found"; exit 1; }
+[[ -f "$PREFLIGHT"   ]] || { echo "ERROR: $PREFLIGHT not found";   exit 1; }
+[[ -f "$POSTCHECK"   ]] || { echo "ERROR: $POSTCHECK not found";   exit 1; }
+[[ -f "$STOPREPORT"  ]] || { echo "ERROR: $STOPREPORT not found";  exit 1; }
 
-chmod +x "$PREFLIGHT" "$POSTCHECK"
+chmod +x "$PREFLIGHT" "$POSTCHECK" "$STOPREPORT"
 
 # ── Create settings file if absent ───────────────────────────────────────────
 mkdir -p "$(dirname "$SETTINGS")"
@@ -60,8 +62,9 @@ echo "Backup saved: $BACKUP"
 # ── Inject hooks (idempotent: skip if already present) ───────────────────────
 PRE_CMD="python3 $PREFLIGHT"
 POST_CMD="python3 $POSTCHECK"
+STOP_CMD="python3 $STOPREPORT"
 
-jq --arg pre "$PRE_CMD" --arg post "$POST_CMD" '
+jq --arg pre "$PRE_CMD" --arg post "$POST_CMD" --arg stop "$STOP_CMD" '
   def add_hook(section; cmd):
     (.hooks[section] // []) as $existing |
     if ($existing | map(.hooks[]?.command) | any(. == cmd)) then
@@ -69,7 +72,9 @@ jq --arg pre "$PRE_CMD" --arg post "$POST_CMD" '
     else
       .hooks[section] = $existing + [{"matcher": "", "hooks": [{"type": "command", "command": cmd}]}]
     end;
-  . | add_hook("PreToolUse"; $pre) | add_hook("PostToolUse"; $post)
+  . | add_hook("PreToolUse"; $pre)
+    | add_hook("PostToolUse"; $post)
+    | add_hook("Stop"; $stop)
 ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
 
 # ── Create Argus home dirs ────────────────────────────────────────────────────
@@ -93,6 +98,7 @@ echo ""
 echo "✓  Argus installed ($SCOPE)"
 echo "   PreToolUse  hook  → $PREFLIGHT"
 echo "   PostToolUse hook  → $POSTCHECK"
+echo "   Stop hook         → $STOPREPORT"
 echo "   Scanner skill     → $SKILL_DIR/SKILL.md"
 echo "   Audit log         → $HOME/.argus/logs/audit.jsonl"
 echo ""

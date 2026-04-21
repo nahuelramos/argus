@@ -341,6 +341,115 @@ def _audit(decision: str, severity: str, tool: str, matched: str, tool_input: di
         pass
 
 
+# ── Human-readable messages ───────────────────────────────────────────────────
+
+# Maps pattern types to plain-English explanations
+_EXPLANATIONS = {
+    "~/.ssh":                    "SSH private keys — reading these enables impersonation and server access",
+    "~/.aws":                    "AWS credentials — leaking these gives full cloud account access",
+    "~/.kube":                   "Kubernetes config — contains cluster credentials and access tokens",
+    "~/.docker":                 "Docker Hub credentials",
+    "~/.vault-token":            "HashiCorp Vault token — grants access to all secrets in Vault",
+    "~/.config/gcloud":          "Google Cloud credentials",
+    "~/.azure":                  "Azure credentials",
+    ".env":                      "Environment file — likely contains API keys and secrets",
+    "tfstate":                   "Terraform state — contains infrastructure secrets in plaintext",
+    ".pem":                      "Private key or certificate file",
+    "/etc/shadow":               "Linux password hashes for all system users",
+    "/etc/passwd":               "Linux user account database",
+    "/proc/":                    "Live process environment — can expose secrets of running processes",
+    "curl":                      "Remote code execution — downloading and running untrusted code",
+    "wget":                      "Remote code execution — downloading and running untrusted code",
+    "/dev/tcp/":                 "Reverse shell — opens a backdoor connection to a remote host",
+    "nc ":                       "Netcat reverse shell",
+    "base64":                    "Obfuscated payload — decoding and executing hidden commands",
+    "\\x":                       "Hex-encoded shellcode",
+    "pastebin":                  "Data exfiltration via paste service",
+    "transfer.sh":               "Data exfiltration via file sharing service",
+    "webhook.site":              "Data exfiltration via webhook service",
+    "ngrok":                     "Tunnel to external server — used to exfiltrate data",
+    "discord.com/api/webhooks":  "Data exfiltration via Discord webhook",
+    "giftshop.club":             "CONFIRMED MALICIOUS — Postmark MCP backdoor (Sept 2025)",
+    "ignore previous":           "Prompt injection — attempt to override Claude's instructions",
+    "zero-width":                "Invisible Unicode chars — used to hide malicious instructions",
+    "--dangerously-skip":        "Disables Claude Code safety mechanisms (used by S1ngularity malware)",
+    "telemetry.js":              "Known supply chain attack file (Shai-Hulud npm campaign 2025)",
+    "chmod":                     "Privilege escalation — making files executable as root (SUID)",
+    "LD_PRELOAD":                "Library injection — used to intercept system calls",
+    "crontab":                   "Persistence — adding malicious scheduled tasks",
+    "systemctl enable":          "Persistence — registering a malicious system service",
+    "shred":                     "Destructive wipe — permanently destroying files",
+    "history -c":                "Covering tracks — erasing shell command history",
+    "/etc/sudoers":              "Privilege escalation — modifying sudo permissions",
+    "authorized_keys":           "Backdoor — adding attacker's SSH key for permanent access",
+    "postinstall":               "Supply chain hook — code running automatically on package install",
+}
+
+def _explain(match: str) -> str:
+    """Return a plain-English explanation for a matched pattern."""
+    m = match.lower()
+    for key, explanation in _EXPLANATIONS.items():
+        if key.lower() in m:
+            return explanation
+    return "matches a known attack pattern"
+
+
+def _allowlist_hint(match: str, tool_name: str, tool_input: dict) -> str:
+    """Suggest how to allowlist this if it's a false positive."""
+    m = match.lower()
+    if any(p in m for p in ["~/.ssh", "~/.aws", "~/.kube", ".env", ".pem", "/etc/"]):
+        path = tool_input.get("file_path") or tool_input.get("command") or ""
+        return (
+            f'If this is intentional, add to ~/.argus/allowlist.json:\n'
+            f'  {{"paths": ["{match}"]}}'
+        )
+    if any(d in m for d in ["http", "webhook", "ngrok", "discord"]):
+        return (
+            f'If this domain is trusted, add to ~/.argus/allowlist.json:\n'
+            f'  {{"domains": ["{match}"]}}'
+        )
+    return "If this is a false positive, add it to ~/.argus/allowlist.json"
+
+
+def _block_message(tool_name: str, tool_input: dict, match: str, severity: str) -> str:
+    explanation = _explain(match)
+    hint        = _allowlist_hint(match, tool_name, tool_input)
+    sev_upper   = severity.upper()
+
+    # Show what was attempted
+    preview = ""
+    if tool_name == "Bash":
+        cmd = (tool_input.get("command") or "")[:120]
+        preview = f"\nCommand: {cmd}"
+    elif tool_name in ("Read", "Write", "Edit"):
+        path = tool_input.get("file_path", "")[:120]
+        preview = f"\nFile: {path}"
+
+    return (
+        f"🚫 ARGUS — Action blocked [{sev_upper}]\n"
+        f"\n"
+        f"Tool:     {tool_name}{preview}\n"
+        f"Matched:  {match}\n"
+        f"Reason:   {explanation}\n"
+        f"\n"
+        f"Tell the user what was blocked and why. Do not retry this action.\n"
+        f"\n"
+        f"False positive? {hint}\n"
+        f"Audit log: ~/.argus/logs/audit.jsonl"
+    )
+
+
+def _warn_message(tool_name: str, match: str, severity: str) -> str:
+    explanation = _explain(match)
+    return (
+        f"⚠️  ARGUS WARNING [{severity.upper()}]\n"
+        f"Suspicious pattern detected: {match}\n"
+        f"Reason: {explanation}\n"
+        f"Proceed only if you are certain this is intentional. "
+        f"Tell the user what you are about to do and why before continuing."
+    )
+
+
 # ── Decision engine ───────────────────────────────────────────────────────────
 
 def _best(*pairs) -> tuple:
@@ -378,21 +487,17 @@ def decide(tool_name: str, tool_input: dict) -> dict:
 
     if rank >= SEVERITY_RANK["high"]:
         _audit("block", severity, tool_name, match, tool_input)
+        reason = _block_message(tool_name, tool_input, match, severity)
         return {
             "hookSpecificOutput": {
                 "permissionDecision": "deny",
-                "permissionDecisionReason": (
-                    f"[Argus] Blocked ({severity}): {match!r}"
-                ),
+                "permissionDecisionReason": reason,
             }
         }
 
     _audit("warn", severity, tool_name, match, tool_input)
     return {
-        "additionalContext": (
-            f"[Argus] Warning ({severity}): suspicious pattern — {match!r}. "
-            "Only proceed if this is intentional."
-        )
+        "additionalContext": _warn_message(tool_name, match, severity)
     }
 
 
