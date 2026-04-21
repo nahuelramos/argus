@@ -678,6 +678,10 @@ def _check_type_from_match(match: str) -> str:
 def main():
     try:
         event      = json.load(sys.stdin)
+        # Debug mode: dump raw event to file when ARGUS_DEBUG is set
+        if os.environ.get("ARGUS_DEBUG"):
+            debug_path = Path.home() / ".argus" / "debug-event.json"
+            debug_path.write_text(json.dumps(event, indent=2))
         tool_name  = event.get("tool_name", "")
         tool_input = event.get("tool_input", {})
         result     = decide(tool_name, tool_input)
