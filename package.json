@@ -1,0 +1,29 @@
+{
+  "name": "argus-security",
+  "version": "1.0.0",
+  "description": "Security hook system for Claude Code, Desktop, and Web — blocks credential theft, reverse shells, and prompt injection",
+  "bin": {
+    "argus": "./bin/argus.js"
+  },
+  "files": [
+    "bin/",
+    "hooks/",
+    "mcp-server/",
+    "scripts/",
+    "data/",
+    "SKILL.md",
+    "WEB_INSTRUCTIONS.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": [
+    "claude", "anthropic", "security", "mcp",
+    "hooks", "claude-code", "ai-security"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nahuelramos/argus"
+  },
+  "license": "MIT"
+}
