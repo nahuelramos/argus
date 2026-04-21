@@ -123,13 +123,6 @@ def _path_hit(candidate: str, pattern: str) -> bool:
     # raw substring — catches patterns embedded in shell commands like "cat ~/.aws/credentials"
     if pattern in candidate or ep in candidate:
         return True
-    # home-agnostic match: ~/foo/bar → match any /<anything>/foo/bar
-    # handles cross-platform (Mac /Users/x vs Linux /home/x)
-    if pattern.startswith("~/"):
-        suffix = pattern[2:]  # e.g. ".ssh/authorized_keys"
-        norm_candidate = candidate.replace("\\", "/")
-        if ("/" + suffix) in norm_candidate or norm_candidate.endswith("/" + suffix):
-            return True
     return False
 
 
@@ -548,18 +541,36 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         return {}
 
     # ── Stage 1: Regex / IOC checks ───────────────────────────────────────────
-    # For doc files (.md/.txt/etc): regex checks run only on the file_path, not
-    # the content — docs legitimately mention sensitive paths and env vars as examples.
-    # The LLM (Stage 2) still reviews full content so real threats aren't missed.
-    is_doc    = _is_doc_write(tool_name, tool_input)
-    scan_strings = (
-        [tool_input.get("file_path", "") or ""]
-        if is_doc
-        else strings
+    # Two content-scan levels for Write/Edit:
+    #
+    #   trusted_path (allowlist.paths) — user explicitly said "I own this dir".
+    #     Skip ALL regex content checks. Zero-width chars still checked (invisible
+    #     chars have no legitimate use even in source code). LLM still runs.
+    #
+    #   is_doc (.md/.txt/etc) — documentation files.
+    #     Skip path/env/network regex on content (legitimate examples).
+    #     Keep injection checks (prompt injection in docs IS a real attack vector).
+    #
+    file_path    = tool_input.get("file_path", "") or ""
+    trusted_path = (
+        tool_name in ("Write", "Edit", "NotebookEdit")
+        and any(_path_hit(file_path, a) for a in allowlist.get("paths", []))
     )
+    is_doc = _is_doc_write(tool_name, tool_input)
+
+    if trusted_path:
+        # Only check the file_path itself + zero-width chars; skip all content regex
+        scan_strings   = [file_path]
+        inject_strings = []
+    elif is_doc:
+        # Check file_path only for path/env/network; keep injection on full content
+        scan_strings   = [file_path]
+        inject_strings = strings
+    else:
+        scan_strings   = strings
+        inject_strings = strings
+
     match, severity = _best(
-        # scan_strings = file_path only for doc files (avoids false positives from
-        # examples like "cat ~/.aws/credentials" or "webhook.site" in documentation)
         _check_sensitive_paths(scan_strings, iocs, allowlist),
         _check_env_vars(scan_strings, iocs),
         _check_network(scan_strings, iocs, allowlist),
@@ -567,10 +578,9 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         _check_obfuscation(scan_strings, iocs),
         _check_claude_code_flags(scan_strings, iocs),
         _check_supply_chain(scan_strings, iocs),
-        # always scan full content — these are injection attacks, dangerous even in docs
-        _check_prompt_injection(strings, iocs),
-        _check_tool_description_poisoning(strings, iocs),
-        _check_zero_width_chars(strings),
+        _check_prompt_injection(inject_strings, iocs),
+        _check_tool_description_poisoning(inject_strings, iocs),
+        _check_zero_width_chars(strings),   # always — no legitimate use for invisible chars
         _check_tool_specific(tool_name, tool_input),
     )
 
