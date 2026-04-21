@@ -19,11 +19,17 @@ import hashlib
 from collections import Counter
 from pathlib import Path as _Path
 
+# Ensure the hooks directory is in Python path so llm_analysis can be found
+# (needed when the script is invoked as an absolute path by Claude Code hooks)
+_HOOKS_DIR = str(_Path(__file__).resolve().parent)
+if _HOOKS_DIR not in sys.path:
+    sys.path.insert(0, _HOOKS_DIR)
+
 # Stage 2 LLM analysis (optional — only runs when ANTHROPIC_API_KEY is set)
 try:
     import llm_analysis as _llm
     _LLM_AVAILABLE = True
-except ImportError:
+except Exception:
     _LLM_AVAILABLE = False
 
 # Checks where LLM second opinion adds the most value (high false-positive rate)
