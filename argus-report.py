@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 """
-argus-report — CLI para ver el audit log de Argus de forma legible.
+argus-report — CLI viewer for the Argus audit log.
 
-Uso:
-  python3 argus-report.py           # últimas 50 entradas
-  python3 argus-report.py --all     # todas las entradas
-  python3 argus-report.py --blocks  # solo bloqueos
-  python3 argus-report.py --today   # solo hoy
-  python3 argus-report.py --stats   # resumen estadístico
+Usage:
+  python3 argus-report.py           # last 50 entries
+  python3 argus-report.py --all     # all entries
+  python3 argus-report.py --blocks  # blocked events only
+  python3 argus-report.py --today   # today's events only
+  python3 argus-report.py --stats   # statistics summary
 """
 import json
 import sys
 from collections import Counter
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 AUDIT_LOG = Path.home() / ".argus" / "logs" / "audit.jsonl"
 
 COLORS = {
-    "critical": "\033[91m",  # red
-    "high":     "\033[91m",  # red
-    "medium":   "\033[93m",  # yellow
-    "low":      "\033[94m",  # blue
+    "critical": "\033[91m",
+    "high":     "\033[91m",
+    "medium":   "\033[93m",
+    "low":      "\033[94m",
     "block":    "\033[91m",
     "warn":     "\033[93m",
     "dlp_alert":"\033[91m",
@@ -53,8 +53,7 @@ def load_entries() -> list:
 
 def fmt_ts(ts: str) -> str:
     try:
-        dt = datetime.fromisoformat(ts).astimezone()
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.fromisoformat(ts).astimezone().strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return ts
 
@@ -65,19 +64,14 @@ def fmt_entry(e: dict) -> str:
     tool     = e.get("tool", "?")
     matched  = e.get("matched", "")
     hook     = e.get("hook", "")
-    ts       = fmt_ts(e.get("ts", ""))
     cwd      = e.get("cwd", "")
 
     dec_col = "block" if decision in ("block", "dlp_alert") else "warn"
     sev_col = severity if severity in COLORS else "dim"
-
-    icon = "🚫" if decision == "block" else "⚠️ " if decision == "warn" else "🔍"
+    icon    = "🚫" if decision == "block" else "⚠️ " if decision == "warn" else "🔍"
 
     lines = [
-        f"{icon}  {c('bold', fmt_ts(e.get('ts','')))}"
-        f"  [{c(dec_col, decision.upper())}]"
-        f"  {c(sev_col, severity.upper())}",
-
+        f"{icon}  {c('bold', fmt_ts(e.get('ts','')))}  [{c(dec_col, decision.upper())}]  {c(sev_col, severity.upper())}",
         f"   {c('dim','hook')}     {hook}",
         f"   {c('dim','tool')}     {c('cyan', tool)}",
         f"   {c('dim','matched')}  {c('bold', matched[:80])}",
@@ -89,11 +83,11 @@ def fmt_entry(e: dict) -> str:
 
 
 def stats(entries: list):
-    total    = len(entries)
-    blocks   = sum(1 for e in entries if e.get("decision") in ("block",))
-    warns    = sum(1 for e in entries if e.get("decision") == "warn")
-    dlp      = sum(1 for e in entries if e.get("decision") == "dlp_alert")
-    crits    = sum(1 for e in entries if e.get("severity") == "critical")
+    total  = len(entries)
+    blocks = sum(1 for e in entries if e.get("decision") == "block")
+    warns  = sum(1 for e in entries if e.get("decision") == "warn")
+    dlp    = sum(1 for e in entries if e.get("decision") == "dlp_alert")
+    crits  = sum(1 for e in entries if e.get("severity") == "critical")
 
     by_tool  = Counter(e.get("tool","?") for e in entries if e.get("decision") == "block")
     by_match = Counter(e.get("matched","?") for e in entries)
@@ -103,23 +97,23 @@ def stats(entries: list):
     print(f"  Blocks        : {c('block', str(blocks))}")
     print(f"  Warnings      : {c('warn', str(warns))}")
     print(f"  DLP alerts    : {c('block', str(dlp))}")
-    print(f"  Critical sev. : {c('critical', str(crits))}")
+    print(f"  Critical      : {c('critical', str(crits))}")
 
     if by_tool:
         print(f"\n{c('bold','  Most blocked tools:')}")
         for tool, count in by_tool.most_common(5):
-            print(f"    {count:3d}×  {c('cyan', tool)}")
+            print(f"    {count:3d}x  {c('cyan', tool)}")
 
     if by_match:
         print(f"\n{c('bold','  Most triggered patterns:')}")
         for match, count in by_match.most_common(5):
-            print(f"    {count:3d}×  {match[:60]}")
+            print(f"    {count:3d}x  {match[:60]}")
     print()
 
 
 def main():
-    args   = sys.argv[1:]
-    all_e  = load_entries()
+    args  = sys.argv[1:]
+    all_e = load_entries()
 
     if not all_e:
         print(f"{c('dim','No audit log found at')} {AUDIT_LOG}")

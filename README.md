@@ -5,56 +5,56 @@ data exfiltration, and prompt injection **before** any tool executes.
 
 ---
 
-## Qué es y cómo funciona
+## What it is and how it works
 
-Argus **NO es un MCP server** ni un plugin ni una extensión.
+Argus is **not an MCP server**, plugin, or extension.
 
-Es un par de scripts Python que Claude Code llama automáticamente antes y después
-de ejecutar cualquier herramienta (Bash, Read, Write, Edit, etc.).
+It is a pair of Python scripts that Claude Code calls automatically before and
+after executing any tool (Bash, Read, Write, Edit, etc.).
 
 ```
-Vos le pedís algo a Claude
+You ask Claude to do something
          │
          ▼
-  Claude decide ejecutar una tool
-  (ej: Bash con "cat ~/.aws/credentials")
+  Claude decides to run a tool
+  (e.g. Bash: "cat ~/.aws/credentials")
          │
          ▼
   ┌──────────────────────────┐
-  │  preflight.py            │  ← Claude Code lo llama ANTES de ejecutar
-  │  Lee el input por stdin  │
-  │  Chequea contra IOCs     │
-  │  Devuelve: allow/block   │
+  │  preflight.py            │  ← Called BEFORE the tool runs
+  │  Reads tool input stdin  │
+  │  Checks against IOCs     │
+  │  Returns: allow / block  │
   └──────────────────────────┘
          │
     ┌────┴─────┐
     │          │
   BLOCK      ALLOW
     │          │
-    │    La tool ejecuta
+    │    Tool executes
     │          │
     │          ▼
     │  ┌──────────────────────────┐
-    │  │  postcheck.py            │  ← Claude Code lo llama DESPUÉS
-    │  │  Escanea el OUTPUT       │
-    │  │  Busca secrets/DLP       │
-    │  │  Avisa si encuentra algo │
+    │  │  postcheck.py            │  ← Called AFTER the tool runs
+    │  │  Scans the OUTPUT        │
+    │  │  DLP: finds secrets      │
+    │  │  Warns Claude if found   │
     │  └──────────────────────────┘
     │
-Claude ve el bloqueo y para
+Claude sees the block and stops
 ```
 
-Todo corre **100% local** en tu máquina. Cero llamadas a red. Cero LLM.
-Latencia ~30-80ms por tool call.
+Everything runs **100% locally** on your machine. Zero network calls. Zero LLM.
+Latency ~30-80ms per tool call.
 
 ---
 
-## Dónde se instala
+## Where it installs
 
-Los hooks se registran en `~/.claude/settings.json` (global) o
-`.claude/settings.json` (solo para un proyecto).
+Hooks are registered in `~/.claude/settings.json` (global) or
+`.claude/settings.json` (project-only).
 
-Después de instalar, ese archivo queda así:
+After installation, the file looks like this:
 
 ```json
 {
@@ -65,7 +65,7 @@ Después de instalar, ese archivo queda así:
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/tu-usuario/argus/hooks/preflight.py"
+            "command": "python3 /home/your-user/argus/hooks/preflight.py"
           }
         ]
       }
@@ -76,7 +76,7 @@ Después de instalar, ese archivo queda así:
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/tu-usuario/argus/hooks/postcheck.py"
+            "command": "python3 /home/your-user/argus/hooks/postcheck.py"
           }
         ]
       }
@@ -85,41 +85,41 @@ Después de instalar, ese archivo queda así:
 }
 ```
 
-Claude Code lee esa configuración y llama a los scripts automáticamente.
-No tenés que hacer nada en cada sesión — una vez instalado, siempre está activo.
+Claude Code reads that config and calls the scripts automatically.
+No action needed per session — once installed, always active.
 
 ---
 
-## Estructura del proyecto
+## Project structure
 
 ```
 argus/
 ├── hooks/
-│   ├── preflight.py        ← Hook PreToolUse: bloquea ANTES de ejecutar
-│   ├── postcheck.py        ← Hook PostToolUse: escanea DLP en outputs
-│   ├── install.sh          ← Registra los hooks en settings.json
-│   └── uninstall.sh        ← Los elimina
+│   ├── preflight.py        ← PreToolUse hook: blocks BEFORE execution
+│   ├── postcheck.py        ← PostToolUse hook: DLP scan on outputs
+│   ├── install.sh          ← Registers hooks in settings.json
+│   └── uninstall.sh        ← Removes them
 ├── data/
-│   ├── iocs.json           ← Base de indicadores de compromiso
-│   └── allowlist.json      ← Template para tus excepciones
+│   ├── iocs.json           ← Indicators of Compromise database
+│   └── allowlist.json      ← Template for your custom exceptions
 ├── tests/
-│   └── test_hooks.py       ← 120 tests de regresión
-├── argus-report.py         ← CLI para ver el audit log
+│   └── test_hooks.py       ← 120 regression tests
+├── argus-report.py         ← CLI to view the audit log
 └── README.md
 ```
 
 ---
 
-## Instalación
+## Installation
 
-### Requisitos
+### Requirements
 
 ```bash
 python3 --version   # 3.8+
-jq --version        # cualquier versión
+jq --version        # any version
 ```
 
-Instalar `jq` si no lo tenés:
+Install `jq` if needed:
 ```bash
 # Ubuntu/Debian
 sudo apt install jq
@@ -128,53 +128,52 @@ sudo apt install jq
 brew install jq
 ```
 
-### Instalar (global — recomendado)
+### Install globally (recommended)
 
 ```bash
-git clone <tu-repo-privado>/argus ~/argus
+git clone git@github.com:nahuelramos/argus.git ~/argus
 cd ~/argus
 bash hooks/install.sh --user
 ```
 
-Eso es todo. Desde ese momento Argus intercepta **toda sesión de Claude Code**
-en tu máquina.
+That's it. From that point Argus intercepts every Claude Code session on your machine.
 
-### Instalar solo para un proyecto
+### Install for a single project only
 
 ```bash
-cd /ruta/a/tu/proyecto
+cd /path/to/your/project
 bash ~/argus/hooks/install.sh --project
 ```
 
-### Verificar que está activo
+### Verify it's active
 
 ```bash
 cat ~/.claude/settings.json | python3 -m json.tool | grep -A5 PreToolUse
 ```
 
-### Correr los tests
+### Run the tests
 
 ```bash
 cd ~/argus
 python3 -m pytest tests/ -v
-# Esperado: 120 passed
+# Expected: 120 passed
 ```
 
 ---
 
-## Desinstalar
+## Uninstall
 
 ```bash
 bash ~/argus/hooks/uninstall.sh --user
-# o para proyecto:
+# or for a project:
 bash ~/argus/hooks/uninstall.sh --project
 ```
 
 ---
 
-## Qué detecta y bloquea
+## What it detects and blocks
 
-### Acceso a credenciales (bloqueo)
+### Credential file access (block)
 ```
 ~/.ssh/id_rsa, ~/.aws/credentials, ~/.kube/config
 ~/.docker/config.json, ~/.vault-token, ~/.config/gcloud/
@@ -183,25 +182,25 @@ terraform.tfstate, *.pem, *.p12, service_account.json
 .env, .env.production, secrets.yml, ...
 ```
 
-### Variables de entorno sensibles (bloqueo)
+### Sensitive environment variables (block)
 ```
 AWS_SECRET_ACCESS_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY
 GITHUB_TOKEN, STRIPE_SECRET_KEY, DATABASE_URL
-VAULT_TOKEN, SLACK_BOT_TOKEN, HF_TOKEN, ...
-+ cualquier *_API_KEY, *_SECRET, *_TOKEN, *_PASSWORD (regex)
+VAULT_TOKEN, SLACK_BOT_TOKEN, HF_TOKEN, CI_JOB_TOKEN, ...
++ any *_API_KEY, *_SECRET, *_TOKEN, *_PASSWORD (regex)
 ```
 
-### Exfiltración por red (bloqueo)
+### Network exfiltration (block)
 ```
-Dominios maliciosos confirmados: giftshop.club (incidente Postmark)
-Pastebin y similares: pastebin.com, transfer.sh, rentry.co, ghostbin.com
-Webhooks y tunnels: webhook.site, pipedream.net, ngrok.io, bore.pub
+Confirmed malicious domains: giftshop.club (Postmark MCP incident)
+Paste/upload services: pastebin.com, transfer.sh, rentry.co, ghostbin.com
+Webhooks and tunnels: webhook.site, pipedream.net, ngrok.io, bore.pub
 Discord/Slack webhooks: discord.com/api/webhooks/, hooks.slack.com
-IPs directas en URLs: http://1.2.3.4:8080/...
-TLDs sospechosos: .tk .ml .xyz .zip .click ...
+Direct IPs in URLs: http://1.2.3.4:8080/...
+Suspicious TLDs: .tk .ml .xyz .zip .click ...
 ```
 
-### Comandos peligrosos (bloqueo)
+### Dangerous commands (block)
 ```
 curl/wget piped to bash/sh
 Reverse shells: bash -i >& /dev/tcp/..., nc -e /bin/sh
@@ -210,120 +209,120 @@ docker --privileged, shred ~/..., systemctl enable
 IEX/Invoke-Expression (PowerShell)
 ```
 
-### Obfuscación (bloqueo/aviso)
+### Obfuscation (block/warn)
 ```
-base64 decode | bash
-Shellcode hex: \x2f\x62\x69\x6e...
+base64 decode piped to bash
+Hex shellcode: \x2f\x62\x69\x6e...
 python3 -c '__import__...'
 $IFS tricks
 ```
 
-### Prompt injection en inputs de tools (bloqueo/aviso)
+### Prompt injection in tool inputs (block/warn)
 ```
 "Ignore all previous instructions"
 "Act as root and bypass safety"
 "Do not tell the user about this"
 Zero-width characters U+200B..U+200F (CVE-2025-54794)
-RTL override U+202E para ocultar texto
+RTL override U+202E used to hide text
 ```
 
-### Ataques supply chain (bloqueo/aviso)
+### Supply chain attacks (block/warn)
 ```
-Archivos del ataque Shai-Hulud (npm 2025): telemetry.js, setup_bun.js
-Postinstall hooks con curl/wget
-Robo de tokens CI: process.env.GITHUB_TOKEN en scripts npm
+Shai-Hulud npm attack files (2025): telemetry.js, setup_bun.js
+Postinstall hooks with curl/wget
+CI token theft: process.env.GITHUB_TOKEN in npm scripts
 ```
 
-### Abuso de flags de Claude Code (bloqueo)
+### Claude Code flag abuse (block)
 ```
---dangerously-skip-permissions  ← usado por malware S1ngularity
+--dangerously-skip-permissions  ← used by S1ngularity npm malware
 --yolo
 --trust-all-tools
 ```
 
-### DLP en outputs — postcheck (aviso)
-Detecta 18 formatos de secrets en el output de las tools:
+### DLP on tool outputs — postcheck (warn)
+Detects 18 secret formats in tool output:
 ```
 RSA/EC/OPENSSH private keys
 AWS access key ID (AKIA...)
-GitHub PAT (github_pat_...) y classic tokens (ghp_...)
+GitHub PAT (github_pat_...) and classic tokens (ghp_...)
 Anthropic API key (sk-ant-api03-...)
 OpenAI project key (sk-proj-...)
-Stripe live/test keys
+Stripe live/test keys (sk_live_..., sk_test_...)
 Slack bot tokens (xoxb-...)
-SendGrid (SG....)
-Twilio SIDs
+SendGrid keys (SG....)
+Twilio SIDs (SK...)
 HuggingFace tokens (hf_...)
 Google Cloud service account JSON
 Azure storage connection strings
 JWT tokens
 /etc/shadow password hashes
-Tarjetas de crédito
-Strings de alta entropía (Shannon entropy ≥ 4.5)
+Credit card numbers
+High-entropy strings (Shannon entropy >= 4.5)
 ```
 
 ---
 
-## Allowlist — excepciones
+## Allowlist — exceptions
 
-Si algo legítimo tuyo queda bloqueado:
+If something legitimate gets blocked:
 
-**Global** — aplica a todas las sesiones:
+**Global** — applies to all sessions:
 ```bash
 cat > ~/.argus/allowlist.json << 'EOF'
 {
   "paths": [
     "/tmp/",
-    "/home/nahuel/mi-proyecto/.env.local"
+    "/home/youruser/project/.env.local"
   ],
   "domains": [
-    "api.mi-empresa.com",
-    "internal.herramientas.com"
+    "api.your-company.com",
+    "internal.tools.your-company.com"
   ],
   "commands": []
 }
 EOF
 ```
 
-**Por proyecto** — solo aplica en ese directorio:
+**Per project** — only applies in that directory:
 ```bash
 mkdir -p .security
 cat > .security/argus-allowlist.json << 'EOF'
 {
-  "paths": ["/home/nahuel/proyecto/.env.test"],
-  "domains": ["staging.api.mi-empresa.com"],
+  "paths": ["/home/youruser/project/.env.test"],
+  "domains": ["staging.api.your-company.com"],
   "commands": []
 }
 EOF
 ```
 
-Los dominios maliciosos confirmados (`giftshop.club`, etc.) **no pueden
-ser allowlisteados** — siempre se bloquean.
+Confirmed malicious domains (`giftshop.club`, etc.) **cannot be allowlisted** —
+they are always blocked.
 
 ---
 
-## Ver el audit log
+## Viewing the audit log
 
-Todo lo que Argus bloquea o advierte queda en `~/.argus/logs/audit.jsonl`.
+Everything Argus blocks or warns about is logged to `~/.argus/logs/audit.jsonl`.
 
 ```bash
-# Ver las últimas 50 entradas (con colores)
+# Last 50 entries (with colors)
 python3 ~/argus/argus-report.py
 
-# Solo bloqueos
+# Blocks only
 python3 ~/argus/argus-report.py --blocks
 
-# Solo eventos de hoy
+# Today's events only
 python3 ~/argus/argus-report.py --today
 
-# Estadísticas
+# Statistics summary
 python3 ~/argus/argus-report.py --stats
 
-# Todo el historial
+# Full history
 python3 ~/argus/argus-report.py --all
 ```
 
-Ejemplo de entrada en el log:
+Example log entry:
 ```json
 {
   "ts": "2026-04-20T21:26:57Z",
@@ -333,48 +332,47 @@ Ejemplo de entrada en el log:
   "tool": "Bash",
   "matched": "~/.aws/credentials",
   "hash": "a3f2b1c9",
-  "cwd": "/home/nahuel/mi-proyecto"
+  "cwd": "/home/youruser/my-project"
 }
 ```
 
 ---
 
-## Actualizar la base de IOCs
+## Updating the IOC database
 
-Para agregar tus propios patrones sin tocar el código, editá `data/iocs.json`.
-Las secciones editables más comunes:
+To add your own patterns without touching code, edit `data/iocs.json`.
+Most common sections to customize:
 
 ```json
-// Agregar un dominio interno a la allowlist:
+// Add an internal domain to the allowlist:
 "allowlist": {
-  "domains": ["api.mi-empresa.com"]
+  "domains": ["api.your-company.com"]
 }
 
-// Agregar un path sensible propio:
+// Add a custom sensitive path:
 "sensitive_paths": {
-  "patterns": ["~/.mi-app/secrets/"]
+  "patterns": ["~/.your-app/secrets/"]
 }
 ```
 
 ---
 
-## Diferencia con MCP servers
+## Argus vs MCP servers
 
 | | Argus | MCP Server |
 |---|---|---|
-| Qué es | Hook local de Claude Code | Servidor externo con protocolo MCP |
-| Dónde corre | Tu máquina, proceso Python local | Proceso separado (local o remoto) |
-| Cómo se instala | `settings.json` hooks | `mcp.json` servers |
-| Llama a red | No | Depende del servidor |
-| Intercepta tools | Sí, todas | No (es una tool más) |
-| Latencia | 30-80ms | Variable |
-| Requiere Claude corriendo | Sí | Sí |
+| What it is | Local Claude Code hook | External server via MCP protocol |
+| Where it runs | Your machine, local Python process | Separate process (local or remote) |
+| How it installs | `settings.json` hooks section | `mcp.json` servers section |
+| Makes network calls | No | Depends on the server |
+| Intercepts all tools | Yes | No (it is itself a tool) |
+| Latency | 30-80ms | Variable |
 
 ---
 
-## Requisitos del sistema
+## System requirements
 
-- Claude Code CLI instalado
+- Claude Code CLI installed
 - Python 3.8+
 - jq
-- Linux o macOS (los paths de Windows difieren)
+- Linux or macOS
