@@ -5,6 +5,36 @@ exfiltration, and prompt injection across Claude Code, Claude Desktop, and Claud
 
 ---
 
+## Quick install
+
+```bash
+npx argus-security
+```
+
+Interactive installer — detects your environment and sets up whichever Claude
+platforms you use.
+
+```
+  [1] Claude Code CLI    — enforced blocking via hooks
+  [2] Claude Desktop     — MCP server with 4 security tools
+  [3] Claude Web         — copy security policy to clipboard
+  [4] All of the above
+```
+
+Other commands:
+```bash
+npx argus-security --all       # install everything, no prompts
+npx argus-security status      # check what's installed + audit stats
+npx argus-security uninstall   # remove everything cleanly
+```
+
+> **From GitHub before npm publish:**
+> ```bash
+> npx github:nahuelramos/argus
+> ```
+
+---
+
 ## Platform support
 
 | Platform | Protection level | Mechanism |
@@ -33,7 +63,11 @@ You ask Claude something
         ▼
 ┌─────────────────────────────────┐
 │  preflight.py  (PreToolUse)     │  ← runs BEFORE the tool
-│  Checks against IOC database    │
+│                                 │
+│  Stage 0: trusted integration?  │  ← your AWS/GitHub/etc config
+│  Stage 1: regex / IOC checks    │  ← 11 checks, ~1ms, free
+│  Stage 2: Claude Haiku (LLM)    │  ← ambiguous cases only, ~300ms
+│                                 │
 │  Returns: allow / block / warn  │
 └─────────────────────────────────┘
         │
@@ -49,19 +83,39 @@ You ask Claude something
    │                                            │  secrets and sensitive data  │
    │                                            └─────────────────────────────┘
    │
-   └── Claude sees the block reason and stops
-        (explains to you what was blocked and why)
+   └── Claude sees the block reason and explains it to you
         │
         ▼
 ┌─────────────────────────────────┐
-│  session-report.py  (Stop)      │  ← runs after EVERY Claude response
+│  session-report.py  (Stop)      │  ← runs after EVERY response
 │  If any events occurred:        │
 │  prints a security summary      │
 └─────────────────────────────────┘
 ```
 
-**Runtime:** 100% local, ~30-80ms per tool call, zero LLM cost for the hooks.
-The scanner skill (on-demand only) makes outbound web requests to threat intel APIs.
+**Runtime:** hooks are 100% local, ~30-80ms per tool call, zero LLM cost.
+Stage 2 LLM analysis (~300ms) only activates on ambiguous cases when
+`ANTHROPIC_API_KEY` is set. The scanner skill makes outbound requests to
+threat intel APIs on demand only.
+
+---
+
+## Three-stage security pipeline
+
+### Stage 0 — Integration check (instant)
+If you have AWS, GitHub, Google Calendar etc. configured in your allowlist,
+Argus recognizes those operations as trusted and skips all further checks.
+`aws s3 ls` with AWS configured → allow immediately.
+
+### Stage 1 — Regex / IOC matching (~1ms)
+11 pattern checks against the IOC database. If severity is `critical` or
+the match is unambiguous → block immediately without calling the LLM.
+
+### Stage 2 — Claude Haiku analysis (~300ms, optional)
+Only triggers for ambiguous cases: medium severity, prompt injection,
+obfuscation, or zero-width character detections. Claude Haiku receives the
+tool call plus your integration context and decides: false positive or real threat?
+Requires `ANTHROPIC_API_KEY` in environment. Silently skipped if not set.
 
 ---
 
@@ -94,170 +148,144 @@ The scanner skill (on-demand only) makes outbound web requests to threat intel A
 
 ```
 argus/
+├── bin/
+│   └── argus.js                 ← npx installer (interactive)
 ├── hooks/                       ← Claude Code CLI
 │   ├── preflight.py             ← PreToolUse: blocks BEFORE execution
 │   ├── postcheck.py             ← PostToolUse: DLP scan on outputs
 │   ├── session-report.py        ← Stop: security summary after each response
-│   ├── install.sh               ← Registers all hooks + installs skill
+│   ├── llm_analysis.py          ← Stage 2: Claude Haiku second opinion
+│   ├── install.sh               ← manual install (alternative to npx)
 │   └── uninstall.sh
 ├── mcp-server/                  ← Claude Desktop
 │   ├── server.py                ← MCP server with 4 security tools
-│   └── install-desktop.sh       ← Installs into claude_desktop_config.json
+│   └── install-desktop.sh       ← manual install for Desktop
 ├── scripts/
-│   └── local-scan.py            ← Static file analyzer (shared by all)
+│   └── local-scan.py            ← static file analyzer (shared)
 ├── data/
 │   ├── iocs.json                ← Indicators of Compromise database
-│   └── allowlist.json           ← Custom exceptions template
+│   └── allowlist.json           ← integrations + custom exceptions
 ├── tests/
 │   └── test_hooks.py            ← 120 regression tests
-├── SKILL.md                     ← Scanner skill (Claude Code + Desktop)
+├── SKILL.md                     ← scanner skill (Claude Code + Desktop)
 ├── WEB_INSTRUCTIONS.md          ← Claude Web: paste into Project Instructions
+├── package.json                 ← npm package definition
 ├── argus-report.py              ← CLI audit log viewer
 └── README.md
 ```
 
 ---
 
-## Installation — Claude Code CLI
+## Installation
 
-- [macOS](#macos)
-- [Linux](#linux)
-- [Windows](#windows)
-
-### macOS
-
-**1. Install requirements**
+### Recommended — npx (all platforms)
 
 ```bash
-# Install Homebrew if you don't have it
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/homebrew/install/HEAD/install.sh)"
+npx argus-security
+```
 
+Requires: Node.js 16+, Python 3.8+, jq
+
+The installer:
+1. Detects your OS and which Claude apps are installed
+2. Asks which platforms to set up
+3. Copies Python files to `~/.argus/lib/`
+4. Registers hooks / MCP server / skill automatically
+5. Copies Web instructions to clipboard (if selected)
+
+---
+
+### Manual install — Claude Code CLI
+
+#### macOS
+
+```bash
 brew install python3 jq git
-```
-
-**2. Clone and install**
-
-```bash
 git clone https://github.com/nahuelramos/argus.git ~/argus
-cd ~/argus
-bash hooks/install.sh --user
+cd ~/argus && bash hooks/install.sh --user
 ```
 
-**3. Verify**
+#### Linux
 
 ```bash
-cat ~/.claude/settings.json | python3 -m json.tool | grep -A5 PreToolUse
-```
-
-**4. Run tests**
-
-```bash
-cd ~/argus && python3 -m pytest tests/ -v
-# Expected: 120 passed
-```
-
----
-
-### Linux
-
-**1. Install requirements**
-
-```bash
-# Ubuntu / Debian
-sudo apt update && sudo apt install -y python3 python3-pip jq git
-
-# Fedora / RHEL
-sudo dnf install -y python3 python3-pip jq git
-
-# Arch
-sudo pacman -S python python-pip jq git
-```
-
-**2. Clone and install**
-
-```bash
+sudo apt install -y python3 python3-pip jq git   # Ubuntu/Debian
 git clone https://github.com/nahuelramos/argus.git ~/argus
-cd ~/argus
-bash hooks/install.sh --user
+cd ~/argus && bash hooks/install.sh --user
 ```
 
-**3. Verify**
+#### Windows
 
-```bash
-cat ~/.claude/settings.json | python3 -m json.tool | grep -A5 PreToolUse
-```
-
-**4. Run tests**
-
-```bash
-cd ~/argus && python3 -m pytest tests/ -v
-# Expected: 120 passed
-```
-
----
-
-### Windows
-
-Windows requires **Git Bash** (included with [Git for Windows](https://git-scm.com/download/win))
-or **WSL2** (recommended).
-
-#### Option A — WSL2 (recommended)
-
+**Option A — WSL2 (recommended)**
 ```powershell
-# In PowerShell
-wsl --install
+wsl --install   # then follow Linux steps inside WSL2
 ```
-
-Then inside WSL2, follow the [Linux instructions](#linux) above.
-After installing, update `%APPDATA%\Claude\settings.json` to use WSL paths:
-
+Update `%APPDATA%\Claude\settings.json` to use WSL paths:
 ```json
 {
   "hooks": {
-    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command",
-      "command": "wsl python3 /home/YOUR_WSL_USER/argus/hooks/preflight.py"}]}],
+    "PreToolUse":  [{"matcher": "", "hooks": [{"type": "command",
+      "command": "wsl python3 /home/YOU/argus/hooks/preflight.py"}]}],
     "PostToolUse": [{"matcher": "", "hooks": [{"type": "command",
-      "command": "wsl python3 /home/YOUR_WSL_USER/argus/hooks/postcheck.py"}]}],
-    "Stop": [{"matcher": "", "hooks": [{"type": "command",
-      "command": "wsl python3 /home/YOUR_WSL_USER/argus/hooks/session-report.py"}]}]
+      "command": "wsl python3 /home/YOU/argus/hooks/postcheck.py"}]}],
+    "Stop":        [{"matcher": "", "hooks": [{"type": "command",
+      "command": "wsl python3 /home/YOU/argus/hooks/session-report.py"}]}]
   }
 }
 ```
 
-#### Option B — Git Bash (no WSL)
+**Option B — Git Bash**
+- Install [Git for Windows](https://git-scm.com/download/win), [Python 3](https://python.org/downloads/windows/), [jq](https://jqlang.org/download/)
+```bash
+git clone https://github.com/nahuelramos/argus.git ~/argus
+cd ~/argus && bash hooks/install.sh --user
+```
 
-**Requirements:**
-- [Git for Windows](https://git-scm.com/download/win) — includes Git Bash
-- [Python 3](https://www.python.org/downloads/windows/) — check "Add to PATH"
-- [jq for Windows](https://jqlang.org/download/) — rename to `jq.exe`, place in `C:\Windows\System32\`
+#### Verify
 
 ```bash
-# In Git Bash
-git clone https://github.com/nahuelramos/argus.git ~/argus
-cd ~/argus
-bash hooks/install.sh --user
-# Settings written to %APPDATA%\Claude\settings.json automatically
+cat ~/.claude/settings.json | python3 -m json.tool | grep -A5 PreToolUse
+cd ~/argus && python3 -m pytest tests/ -v   # Expected: 120 passed
+```
+
+#### Uninstall
+
+```bash
+bash ~/argus/hooks/uninstall.sh --user
 ```
 
 ---
 
-### What gets registered in settings.json
+### Manual install — Claude Desktop
 
-```json
-{
-  "hooks": {
-    "PreToolUse": [{"matcher": "", "hooks": [
-      {"type": "command", "command": "python3 /your-path/argus/hooks/preflight.py"}
-    ]}],
-    "PostToolUse": [{"matcher": "", "hooks": [
-      {"type": "command", "command": "python3 /your-path/argus/hooks/postcheck.py"}
-    ]}],
-    "Stop": [{"matcher": "", "hooks": [
-      {"type": "command", "command": "python3 /your-path/argus/hooks/session-report.py"}
-    ]}]
-  }
-}
+```bash
+# macOS / Linux / Windows (Git Bash)
+bash ~/argus/mcp-server/install-desktop.sh
 ```
+
+Config locations:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+
+Restart Claude Desktop after installing. Claude will have these tools:
+
+| Tool | When to call it |
+|---|---|
+| `argus_check` | Before any shell command, file access, or network request |
+| `argus_scan_package` | Before `npm install` or `pip install` |
+| `argus_scan_file` | Static IOC analysis on a local file |
+| `argus_audit_log` | View recent security events |
+
+---
+
+### Manual install — Claude Web
+
+1. Open `WEB_INSTRUCTIONS.md` from this repo
+2. Copy the full content
+3. Go to **claude.ai → Projects → Your Project → Edit Instructions**
+4. Paste it in
+
+---
 
 ### Install for a single project only
 
@@ -266,61 +294,22 @@ cd /path/to/your/project
 bash ~/argus/hooks/install.sh --project
 ```
 
-### Uninstall
-
-```bash
-bash ~/argus/hooks/uninstall.sh --user
-# or: bash ~/argus/hooks/uninstall.sh --project
-```
-
 ---
 
-## Installation — Claude Desktop
+## What gets registered in settings.json
 
-Claude Desktop supports MCPs but not hooks. Argus provides an MCP server that
-gives Claude 4 security tools to call before risky actions.
-
-**Requirements:** Python 3.8+, `pip install mcp`, jq
-
-```bash
-# macOS
-bash ~/argus/mcp-server/install-desktop.sh
-# Config: ~/Library/Application Support/Claude/claude_desktop_config.json
-
-# Linux
-bash ~/argus/mcp-server/install-desktop.sh
-# Config: ~/.config/Claude/claude_desktop_config.json
-
-# Windows (Git Bash)
-bash ~/argus/mcp-server/install-desktop.sh
-# Config: %APPDATA%\Claude\claude_desktop_config.json
+```json
+{
+  "hooks": {
+    "PreToolUse":  [{"matcher": "", "hooks": [{"type": "command",
+      "command": "python3 ~/.argus/lib/hooks/preflight.py"}]}],
+    "PostToolUse": [{"matcher": "", "hooks": [{"type": "command",
+      "command": "python3 ~/.argus/lib/hooks/postcheck.py"}]}],
+    "Stop":        [{"matcher": "", "hooks": [{"type": "command",
+      "command": "python3 ~/.argus/lib/hooks/session-report.py"}]}]
+  }
+}
 ```
-
-Restart Claude Desktop after installing. Claude will have these tools:
-
-| Tool | When Claude should call it |
-|---|---|
-| `argus_check` | Before any shell command, file access, or network request |
-| `argus_scan_package` | Before `npm install` or `pip install` — queries GHSA + OSV + registry |
-| `argus_scan_file` | Static IOC analysis on any local file |
-| `argus_audit_log` | View recent security events |
-
-> **Limitation:** Claude calls these tools voluntarily. There is no hook mechanism
-> in Desktop to force interception the way CLI hooks work.
-
----
-
-## Installation — Claude Web
-
-Claude Web cannot run local code. Paste the security policy into Project Instructions:
-
-1. Open `WEB_INSTRUCTIONS.md` from this repo
-2. Copy the full content
-3. Go to **claude.ai → Projects → Your Project → Edit Instructions**
-4. Paste it in
-
-> **Limitation:** Text-based policy only — no code enforcement. Claude follows
-> the instructions as context, not as a system-level constraint.
 
 ---
 
@@ -353,7 +342,7 @@ Discord/Slack webhooks, direct IP URLs, suspicious TLDs (.tk .xyz .zip ...)
 
 ### Dangerous commands
 ```
-curl/wget piped to bash/sh (remote code execution)
+curl/wget piped to bash/sh
 Reverse shells: bash -i >& /dev/tcp/..., nc -e /bin/sh, python socket.connect
 chmod SUID, LD_PRELOAD, crontab abuse, systemctl enable
 docker --privileged -v /:/host, shred, IEX/Invoke-Expression
@@ -407,11 +396,9 @@ High-entropy strings (Shannon entropy ≥ 4.5)
 
 ## Security reports
 
-### 1. Inline block message (in chat)
+### 1. Inline block message
 
-When Claude tries something blocked, it sees a detailed explanation and
-communicates it to you:
-
+When Claude tries something blocked, it explains it to you:
 ```
 🚫 ARGUS — Action blocked [HIGH]
 
@@ -426,9 +413,8 @@ False positive? Add to ~/.argus/allowlist.json:
 
 ### 2. Session report (after each response)
 
-If any security events occurred during Claude's last response, a summary
-prints automatically in the terminal:
-
+If any security events occurred during Claude's response, a summary prints
+automatically in the terminal:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   🛡  ARGUS SECURITY REPORT — this response turn
@@ -438,7 +424,6 @@ prints automatically in the terminal:
      🟠 [HIGH] Bash → ~/.aws/credentials
 
   Full log: ~/.argus/logs/audit.jsonl
-  View:     python3 ~/argus/argus-report.py --blocks
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -449,34 +434,54 @@ python3 ~/argus/argus-report.py            # last 50 entries
 python3 ~/argus/argus-report.py --blocks   # blocked events only
 python3 ~/argus/argus-report.py --today    # today only
 python3 ~/argus/argus-report.py --stats    # statistics summary
-python3 ~/argus/argus-report.py --all      # full history
 ```
 
 ---
 
-## Allowlist — exceptions
+## Allowlist — exceptions and integrations
 
-**Global** — all sessions:
-```bash
-cat > ~/.argus/allowlist.json << 'EOF'
+Argus ships with templates for 12 common integrations. Edit
+`~/.argus/allowlist.json` (global) or `.security/argus-allowlist.json`
+(per project) to enable them.
+
+### Enable a trusted integration
+
+```json
 {
-  "paths": ["/tmp/", "/home/youruser/project/.env.local"],
-  "domains": ["api.your-company.com"],
-  "commands": []
+  "integrations": {
+    "aws": {
+      "description": "AWS CLI — authorized cloud operations",
+      "allowed_patterns": ["aws s3 ls", "aws ec2 describe", "aws sts"],
+      "blocked_patterns": ["aws iam create-user"],
+      "allowed_domains": ["s3.amazonaws.com", "ec2.amazonaws.com"]
+    },
+    "google_calendar": {
+      "description": "Google Calendar API",
+      "allowed_domains": ["calendar.googleapis.com", "oauth2.googleapis.com"]
+    }
+  }
 }
-EOF
 ```
 
-**Per project** — only in that directory:
-```bash
-mkdir -p .security
-cat > .security/argus-allowlist.json << 'EOF'
+Pre-configured templates included: `aws`, `google_calendar`, `google_drive`,
+`github`, `slack`, `notion`, `linear`, `jira`, `postgres`, `docker`,
+`vercel`, `stripe`.
+
+### Add trusted MCPs
+
+```json
 {
-  "paths": [".env.test"],
-  "domains": ["staging.api.your-company.com"],
-  "commands": []
+  "trusted_mcps": ["aws-mcp-server", "google-calendar-mcp"]
 }
-EOF
+```
+
+### Add custom paths or domains
+
+```json
+{
+  "paths":   ["/tmp/", "/home/you/project/.env.local"],
+  "domains": ["api.your-company.com", "internal.tools.com"]
+}
 ```
 
 Confirmed malicious domains (`giftshop.club`, etc.) cannot be allowlisted.
@@ -491,9 +496,6 @@ Edit `data/iocs.json` to add custom patterns without touching code:
 {
   "sensitive_paths": {
     "patterns": ["~/.your-app/secrets/"]
-  },
-  "allowlist": {
-    "domains": ["api.your-company.com"]
   }
 }
 ```
@@ -531,8 +533,22 @@ Reports are saved to `.security/argus-scan-YYYY-MM-DD.md`.
 
 | | Claude Code CLI | Claude Desktop | Claude Web |
 |---|---|---|---|
+| Node.js 16+ | ✅ for npx install | ✅ for npx install | — |
 | Python 3.8+ | ✅ required | ✅ required | — |
 | jq | ✅ required | ✅ required | — |
-| git | ✅ required | optional | — |
-| `pip install mcp` | — | ✅ required | — |
-| OS | macOS · Linux · Windows | macOS · Windows | any browser |
+| `pip install mcp` | — | ✅ required (auto-installed) | — |
+| OS | macOS · Linux · Windows | macOS · Windows · Linux | any browser |
+
+---
+
+## Publishing to npm
+
+```bash
+npm login
+npm publish
+```
+
+After publishing, users install with:
+```bash
+npx argus-security
+```
