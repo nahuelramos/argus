@@ -7,9 +7,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFLIGHT="$SCRIPT_DIR/preflight.py"
 POSTCHECK="$SCRIPT_DIR/postcheck.py"
 
+# Detect platform and resolve settings path
+_detect_settings_path() {
+  local scope="$1"
+  # Windows via Git Bash: APPDATA is set
+  if [[ -n "${APPDATA:-}" ]]; then
+    local win_base
+    win_base="$(cygpath "$APPDATA" 2>/dev/null || echo "$APPDATA")/Claude"
+    if [[ "$scope" == "--user" ]]; then
+      echo "$win_base/settings.json"
+    else
+      echo "$(pwd)/.claude/settings.json"
+    fi
+  else
+    if [[ "$scope" == "--user" ]]; then
+      echo "$HOME/.claude/settings.json"
+    else
+      echo "$(pwd)/.claude/settings.json"
+    fi
+  fi
+}
+
 case "$SCOPE" in
-  --user)    SETTINGS="$HOME/.claude/settings.json" ;;
-  --project) SETTINGS="$(pwd)/.claude/settings.json" ;;
+  --user|--project) SETTINGS="$(_detect_settings_path "$SCOPE")" ;;
   *)
     echo "Usage: $0 [--user|--project]"
     echo "  --user     Install globally for this user (recommended)"

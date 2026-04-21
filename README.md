@@ -132,51 +132,174 @@ argus/
 
 ## Installation
 
-### Requirements
+- [macOS](#macos)
+- [Linux](#linux)
+- [Windows](#windows)
+
+---
+
+### macOS
+
+**1. Install requirements**
 
 ```bash
-python3 --version   # 3.8+
-jq --version        # any version
+# Install Homebrew if you don't have it
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/homebrew/install/HEAD/install.sh)"
+
+# Install dependencies
+brew install python3 jq git
 ```
 
-Install `jq` if needed:
-```bash
-# Ubuntu/Debian
-sudo apt install jq
-
-# macOS
-brew install jq
-```
-
-### Install globally (recommended)
+**2. Clone and install**
 
 ```bash
-git clone git@github.com:nahuelramos/argus.git ~/argus
+git clone https://github.com/nahuelramos/argus.git ~/argus
 cd ~/argus
 bash hooks/install.sh --user
 ```
 
-That's it. From that point Argus intercepts every Claude Code session on your machine.
-
-### Install for a single project only
-
-```bash
-cd /path/to/your/project
-bash ~/argus/hooks/install.sh --project
-```
-
-### Verify it's active
+**3. Verify**
 
 ```bash
 cat ~/.claude/settings.json | python3 -m json.tool | grep -A5 PreToolUse
 ```
 
-### Run the tests
+**4. Run tests**
 
 ```bash
-cd ~/argus
-python3 -m pytest tests/ -v
+cd ~/argus && python3 -m pytest tests/ -v
 # Expected: 120 passed
+```
+
+---
+
+### Linux
+
+**1. Install requirements**
+
+```bash
+# Ubuntu / Debian
+sudo apt update && sudo apt install -y python3 python3-pip jq git
+
+# Fedora / RHEL
+sudo dnf install -y python3 python3-pip jq git
+
+# Arch
+sudo pacman -S python python-pip jq git
+```
+
+**2. Clone and install**
+
+```bash
+git clone https://github.com/nahuelramos/argus.git ~/argus
+cd ~/argus
+bash hooks/install.sh --user
+```
+
+**3. Verify**
+
+```bash
+cat ~/.claude/settings.json | python3 -m json.tool | grep -A5 PreToolUse
+```
+
+**4. Run tests**
+
+```bash
+cd ~/argus && python3 -m pytest tests/ -v
+# Expected: 120 passed
+```
+
+---
+
+### Windows
+
+Windows requires **Git Bash** (included with [Git for Windows](https://git-scm.com/download/win))
+or **WSL2** (recommended). The hooks run as Python scripts called by Claude Code.
+
+#### Option A — WSL2 (recommended, full Linux environment)
+
+```powershell
+# In PowerShell — install WSL2 with Ubuntu
+wsl --install
+```
+
+Then inside the WSL2 terminal, follow the [Linux instructions](#linux) above.
+Claude Code for Windows can call WSL scripts via the hook command path.
+
+After installing in WSL2, update the hook paths in `%APPDATA%\Claude\settings.json`
+to point to the WSL paths:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "wsl python3 /home/YOUR_WSL_USER/argus/hooks/preflight.py"
+      }]
+    }],
+    "PostToolUse": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "wsl python3 /home/YOUR_WSL_USER/argus/hooks/postcheck.py"
+      }]
+    }]
+  }
+}
+```
+
+#### Option B — Git Bash (no WSL required)
+
+**1. Install requirements**
+
+- [Git for Windows](https://git-scm.com/download/win) — includes Git Bash
+- [Python 3](https://www.python.org/downloads/windows/) — check "Add to PATH" during install
+- [jq for Windows](https://jqlang.org/download/) — download `jq-win64.exe`, rename to `jq.exe`, place in `C:\Windows\System32\`
+
+**2. Clone and install (in Git Bash)**
+
+```bash
+git clone https://github.com/nahuelramos/argus.git ~/argus
+cd ~/argus
+bash hooks/install.sh --user
+```
+
+> On Windows, `~` resolves to `C:\Users\YourName\`. The settings file
+> is at `%APPDATA%\Claude\settings.json`.
+
+**3. Verify (in Git Bash)**
+
+```bash
+cat "$APPDATA/Claude/settings.json" | python3 -m json.tool | grep -A5 PreToolUse
+```
+
+**4. Run tests (in Git Bash)**
+
+```bash
+cd ~/argus && python3 -m pytest tests/ -v
+```
+
+> **Note:** The `install.sh` script auto-detects Windows paths when running
+> inside Git Bash. If it doesn't find `settings.json`, create it manually
+> at `%APPDATA%\Claude\settings.json` and paste the JSON from the
+> [Where it installs](#where-it-installs) section above.
+
+---
+
+### Install for a single project only
+
+Works on all platforms. Run from inside the project directory:
+
+```bash
+# macOS / Linux
+cd /path/to/your/project
+bash ~/argus/hooks/install.sh --project
+
+# Windows (Git Bash)
+cd /c/Users/YourName/your-project
+bash ~/argus/hooks/install.sh --project
 ```
 
 ---
@@ -184,9 +307,11 @@ python3 -m pytest tests/ -v
 ## Uninstall
 
 ```bash
+# macOS / Linux
 bash ~/argus/hooks/uninstall.sh --user
-# or for a project:
-bash ~/argus/hooks/uninstall.sh --project
+
+# Windows (Git Bash)
+bash ~/argus/hooks/uninstall.sh --user
 ```
 
 ---
