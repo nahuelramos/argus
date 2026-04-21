@@ -90,6 +90,20 @@ No action needed per session — once installed, always active.
 
 ---
 
+## Platform support
+
+| Platform | Protection | How |
+|---|---|---|
+| **Claude Code CLI** | ✅ Enforced blocking | PreToolUse/PostToolUse hooks |
+| **Claude Desktop** | ⚡ Security tools | MCP server (`mcp-server/`) |
+| **Claude Web** | 📋 Policy instructions | Paste `WEB_INSTRUCTIONS.md` into Project Instructions |
+
+> Claude Code CLI is the only platform with true enforcement — hooks physically
+> block tool calls before they execute. Desktop and Web rely on Claude following
+> the security tools/instructions provided.
+
+---
+
 ## Two components
 
 Argus has two complementary components:
@@ -111,20 +125,24 @@ Argus has two complementary components:
 
 ```
 argus/
-├── hooks/
-│   ├── preflight.py        ← PreToolUse hook: blocks BEFORE execution
-│   ├── postcheck.py        ← PostToolUse hook: DLP scan on outputs
-│   ├── install.sh          ← Registers hooks + installs skill
-│   └── uninstall.sh        ← Removes everything
+├── hooks/                      ← Claude Code CLI (enforced hooks)
+│   ├── preflight.py            ← PreToolUse: blocks BEFORE execution
+│   ├── postcheck.py            ← PostToolUse: DLP scan on outputs
+│   ├── install.sh              ← Registers hooks + installs skill
+│   └── uninstall.sh
+├── mcp-server/                 ← Claude Desktop (MCP server)
+│   ├── server.py               ← MCP server with 4 security tools
+│   └── install-desktop.sh      ← Installs into claude_desktop_config.json
 ├── scripts/
-│   └── local-scan.py       ← Static file analyzer (used by the skill)
+│   └── local-scan.py           ← Static file analyzer (shared)
 ├── data/
-│   ├── iocs.json           ← Indicators of Compromise database
-│   └── allowlist.json      ← Template for your custom exceptions
+│   ├── iocs.json               ← Indicators of Compromise database
+│   └── allowlist.json          ← Custom exceptions template
 ├── tests/
-│   └── test_hooks.py       ← 120 regression tests
-├── SKILL.md                ← Scanner skill: threat intel + static analysis
-├── argus-report.py         ← CLI to view the audit log
+│   └── test_hooks.py           ← 120 regression tests
+├── SKILL.md                    ← Scanner skill (Claude Code + Desktop)
+├── WEB_INSTRUCTIONS.md         ← Claude Web: paste into Project Instructions
+├── argus-report.py             ← CLI audit log viewer
 └── README.md
 ```
 
@@ -548,6 +566,80 @@ Full report: .security/argus-scan-2026-04-20.md
 ```
 
 Reports are saved to `.security/argus-scan-YYYY-MM-DD.md`.
+
+---
+
+---
+
+## Claude Desktop installation
+
+Claude Desktop uses MCPs, not hooks. Argus provides an MCP server that
+gives Claude 4 security tools it should call before any risky action.
+
+**Requirements:** Python 3.8+, `pip install mcp`, jq
+
+### macOS
+
+```bash
+bash ~/argus/mcp-server/install-desktop.sh
+```
+
+Config is written to `~/Library/Application Support/Claude/claude_desktop_config.json`.
+
+### Windows
+
+```bash
+# In Git Bash
+bash ~/argus/mcp-server/install-desktop.sh
+```
+
+Config is written to `%APPDATA%\Claude\claude_desktop_config.json`.
+
+### Linux
+
+```bash
+bash ~/argus/mcp-server/install-desktop.sh
+```
+
+Config is written to `~/.config/Claude/claude_desktop_config.json`.
+
+### After installing
+
+Restart Claude Desktop. Claude will have these tools available:
+
+| Tool | What it does |
+|---|---|
+| `argus_check` | Security check before running any command, file, or URL |
+| `argus_scan_package` | Scan npm/pip package against GitHub Advisory DB + OSV + registry |
+| `argus_scan_file` | Static IOC analysis on a local file |
+| `argus_audit_log` | View recent blocked/warned events |
+
+Claude is instructed (via the tool description) to **always call `argus_check`
+before** executing shell commands, accessing files, or making network requests.
+
+> **Limitation:** Desktop has no hooks — Claude calls these tools voluntarily.
+> It cannot be forced to call them the way CLI hooks are enforced.
+
+---
+
+## Claude Web installation
+
+Claude Web cannot run local code. The best available option is a detailed
+security policy in your Project Instructions.
+
+1. Open `WEB_INSTRUCTIONS.md` from this repo
+2. Copy the full content
+3. Go to **claude.ai → Projects → Your Project → Edit Instructions**
+4. Paste it in
+
+This instructs Claude to:
+- Refuse credential access, exfiltration commands, and dangerous patterns
+- Warn before installing packages or making network requests
+- Detect and flag prompt injection attempts (including zero-width chars)
+- Run threat intel scans when asked
+
+> **Limitation:** Web has no code enforcement. Claude follows these instructions
+> as part of its context, but there is no system-level blocking.
 
 ---
 
