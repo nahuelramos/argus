@@ -195,6 +195,9 @@ def _check_network(strings: list, iocs: dict, allowlist: dict):
         for rx in cfg.get("suspicious_patterns", []):
             if re.search(rx, s):
                 return rx, "high"
+    for rx in cfg.get("exfil_patterns", []):
+        if re.search(rx, blob):
+            return rx, "high"
     return None, ""
 
 
@@ -573,16 +576,21 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         pass
 
     if trusted_path:
-        # Only check the file_path itself + zero-width chars; skip all content regex
+        # Trusted dev path — skip all content regex, only check the file_path
         scan_strings   = [file_path]
         inject_strings = []
+        poison_strings = []
     elif is_doc:
-        # Check file_path only for path/env/network; keep injection on full content
+        # Doc file — skip path/env/network/exfil on content (legit doc examples).
+        # Keep prompt_injection and tool_description_poisoning on full content —
+        # both are real attack vectors even in doc files.
         scan_strings   = [file_path]
         inject_strings = strings
+        poison_strings = strings
     else:
         scan_strings   = strings
         inject_strings = strings
+        poison_strings = strings
 
     match, severity = _best(
         _check_sensitive_paths(scan_strings, iocs, allowlist),
@@ -593,7 +601,7 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         _check_claude_code_flags(scan_strings, iocs),
         _check_supply_chain(scan_strings, iocs),
         _check_prompt_injection(inject_strings, iocs),
-        _check_tool_description_poisoning(inject_strings, iocs),
+        _check_tool_description_poisoning(poison_strings, iocs),
         _check_zero_width_chars(strings),   # always — no legitimate use for invisible chars
         _check_tool_specific(tool_name, tool_input),
     )

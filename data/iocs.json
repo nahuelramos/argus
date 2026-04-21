@@ -138,6 +138,9 @@
       "(?i)discord\\.com/api/webhooks/\\d+/",
       "(?i)hooks\\.slack\\.com/services/",
       "(?i)t\\.me/[^/]+\\?start="
+    ],
+    "exfil_patterns": [
+      "(?i)(send|post|upload).*to.*(webhook|discord|pastebin|transfer\\.sh)"
     ]
   },
 
@@ -275,8 +278,7 @@
       "(?i)<IMPORTANT>",
       "(?i)\\[HIDDEN\\s+INSTRUCTIONS?\\]",
       "(?i)\\[INTERNAL\\s+ONLY\\]",
-      "(?i)(READ|FETCH|EXFILTRATE).*(?:secret|credential|key|token).*then.*(send|post|upload)",
-      "(?i)(send|post|upload).*to.*(webhook|discord|pastebin|transfer\\.sh)"
+      "(?i)(READ|FETCH|EXFILTRATE).*(?:secret|credential|key|token).*then.*(send|post|upload)"
     ]
   },
 
