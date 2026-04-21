@@ -578,7 +578,6 @@ def decide(tool_name: str, tool_input: dict) -> dict:
     llm_result = None
     use_llm    = (
         _LLM_AVAILABLE
-        and os.environ.get("ANTHROPIC_API_KEY")
         and not os.environ.get("ARGUS_NO_LLM")  # set this in tests or CI
     )
 

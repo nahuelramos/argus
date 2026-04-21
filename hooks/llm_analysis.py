@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-Argus LLM Analysis — Stage 2 security check using Claude Haiku.
+Argus LLM Analysis — Stage 2 security check.
 
-Called only when:
-  - Regex stage finds medium severity (ambiguous)
-  - Regex finds high from prompt_injection or obfuscation (high false-positive rate)
-  - Bash/Write calls with no regex findings (novel attack detection)
+Two backends (tried in order):
+  1. claude CLI  — uses the active Claude Code / Desktop session, no API key needed.
+  2. Direct API  — uses ANTHROPIC_API_KEY if set.
 
-Requires ANTHROPIC_API_KEY in environment.
-Falls back silently to allow if API key is missing or call fails.
+Falls back silently to allow if both are unavailable.
 """
 import json
 import os
+import subprocess
 import urllib.request
 from pathlib import Path
 
@@ -99,19 +98,18 @@ def _build_context(allowlist: dict) -> str:
 
 def analyze(tool_name: str, tool_input: dict, regex_findings: list) -> dict:
     """
-    Ask Claude Haiku if this tool call is malicious.
+    Ask Claude if this tool call is malicious.
+
+    Tries two backends in order:
+      1. `claude -p` CLI  — uses the active Claude Code/Desktop session (no API key needed)
+      2. Direct API call  — uses ANTHROPIC_API_KEY if set
 
     Returns:
-      {"decision": "block|warn|allow", "confidence": float, "reason": str, "source": "llm"}
+      {"decision": "block|warn|allow", "confidence": float, "reason": str, "source": "llm|llm_cli"}
 
     On any error (no key, timeout, API error):
       {"decision": "allow", "source": "llm_unavailable", "reason": "..."}
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return {"decision": "allow", "source": "llm_unavailable",
-                "reason": "ANTHROPIC_API_KEY not set — LLM analysis skipped"}
-
     allowlist = _load_allowlist()
     context   = _build_context(allowlist)
 
@@ -133,6 +131,18 @@ def analyze(tool_name: str, tool_input: dict, regex_findings: list) -> dict:
 </user_context>
 
 Respond only with JSON: {{"decision": "block|warn|allow", "confidence": 0.0-1.0, "reason": "..."}}"""
+
+    # ── Backend 1: claude CLI (uses active Claude Code / Desktop session) ─────
+    # No API key needed — piggybacks on the user's existing auth.
+    cli_result = _analyze_via_cli(user_message)
+    if cli_result:
+        return cli_result
+
+    # ── Backend 2: Direct API call (requires ANTHROPIC_API_KEY) ──────────────
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return {"decision": "allow", "source": "llm_unavailable",
+                "reason": "claude CLI unavailable and ANTHROPIC_API_KEY not set"}
 
     payload = {
         "model":      MODEL,
@@ -157,7 +167,6 @@ Respond only with JSON: {{"decision": "block|warn|allow", "confidence": 0.0-1.0,
             text   = raw["content"][0]["text"].strip()
             result = json.loads(text)
             result["source"] = "llm"
-            # Validate expected fields
             if result.get("decision") not in ("block", "warn", "allow"):
                 raise ValueError(f"Unexpected decision: {result.get('decision')}")
             return result
@@ -168,3 +177,32 @@ Respond only with JSON: {{"decision": "block|warn|allow", "confidence": 0.0-1.0,
     except Exception as e:
         return {"decision": "allow", "source": "llm_error",
                 "reason": f"LLM analysis failed: {str(e)[:80]}"}
+
+
+def _analyze_via_cli(prompt: str) -> dict | None:
+    """
+    Run analysis via `claude -p` using the active Claude Code session.
+    Returns parsed result dict, or None if CLI is unavailable or fails.
+    """
+    try:
+        full_prompt = SYSTEM_PROMPT + "\n\n" + prompt
+        result = subprocess.run(
+            ["claude", "-p", full_prompt, "--output-format", "json"],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+        )
+        if result.returncode != 0:
+            return None
+        # claude --output-format json wraps response in {"result": "..."}
+        outer = json.loads(result.stdout)
+        text  = outer.get("result") or outer.get("content") or result.stdout
+        if isinstance(text, str):
+            text = text.strip()
+        parsed = json.loads(text)
+        if parsed.get("decision") not in ("block", "warn", "allow"):
+            return None
+        parsed["source"] = "llm_cli"
+        return parsed
+    except Exception:
+        return None
