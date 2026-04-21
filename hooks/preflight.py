@@ -123,6 +123,13 @@ def _path_hit(candidate: str, pattern: str) -> bool:
     # raw substring — catches patterns embedded in shell commands like "cat ~/.aws/credentials"
     if pattern in candidate or ep in candidate:
         return True
+    # home-agnostic match: ~/foo/bar → match any /<anything>/foo/bar
+    # handles cross-platform (Mac /Users/x vs Linux /home/x)
+    if pattern.startswith("~/"):
+        suffix = pattern[2:]  # e.g. ".ssh/authorized_keys"
+        norm_candidate = candidate.replace("\\", "/")
+        if ("/" + suffix) in norm_candidate or norm_candidate.endswith("/" + suffix):
+            return True
     return False
 
 
@@ -520,6 +527,17 @@ def _best(*pairs) -> tuple:
     return winner
 
 
+_DOC_EXTENSIONS = {".md", ".txt", ".rst", ".adoc", ".mdx"}
+
+
+def _is_doc_write(tool_name: str, tool_input: dict) -> bool:
+    """True when writing/editing a documentation file — content may mention sensitive paths as examples."""
+    if tool_name not in ("Write", "Edit", "NotebookEdit"):
+        return False
+    path = tool_input.get("file_path", "") or ""
+    return any(path.lower().endswith(ext) for ext in _DOC_EXTENSIONS)
+
+
 def decide(tool_name: str, tool_input: dict) -> dict:
     iocs      = _iocs()
     allowlist = _allowlist()
@@ -530,8 +548,15 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         return {}
 
     # ── Stage 1: Regex / IOC checks ───────────────────────────────────────────
+    # For doc files: only scan the file_path for sensitive paths, not the content.
+    # Content may legitimately mention sensitive paths as documentation examples.
+    path_strings = (
+        [tool_input.get("file_path", "") or ""]
+        if _is_doc_write(tool_name, tool_input)
+        else strings
+    )
     match, severity = _best(
-        _check_sensitive_paths(strings, iocs, allowlist),
+        _check_sensitive_paths(path_strings, iocs, allowlist),
         _check_env_vars(strings, iocs),
         _check_network(strings, iocs, allowlist),
         _check_dangerous_commands(strings, iocs),
