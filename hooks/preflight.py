@@ -548,24 +548,29 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         return {}
 
     # ── Stage 1: Regex / IOC checks ───────────────────────────────────────────
-    # For doc files: only scan the file_path for sensitive paths, not the content.
-    # Content may legitimately mention sensitive paths as documentation examples.
-    path_strings = (
+    # For doc files (.md/.txt/etc): regex checks run only on the file_path, not
+    # the content — docs legitimately mention sensitive paths and env vars as examples.
+    # The LLM (Stage 2) still reviews full content so real threats aren't missed.
+    is_doc    = _is_doc_write(tool_name, tool_input)
+    scan_strings = (
         [tool_input.get("file_path", "") or ""]
-        if _is_doc_write(tool_name, tool_input)
+        if is_doc
         else strings
     )
     match, severity = _best(
-        _check_sensitive_paths(path_strings, iocs, allowlist),
-        _check_env_vars(strings, iocs),
-        _check_network(strings, iocs, allowlist),
-        _check_dangerous_commands(strings, iocs),
-        _check_obfuscation(strings, iocs),
+        # scan_strings = file_path only for doc files (avoids false positives from
+        # examples like "cat ~/.aws/credentials" or "webhook.site" in documentation)
+        _check_sensitive_paths(scan_strings, iocs, allowlist),
+        _check_env_vars(scan_strings, iocs),
+        _check_network(scan_strings, iocs, allowlist),
+        _check_dangerous_commands(scan_strings, iocs),
+        _check_obfuscation(scan_strings, iocs),
+        _check_claude_code_flags(scan_strings, iocs),
+        _check_supply_chain(scan_strings, iocs),
+        # always scan full content — these are injection attacks, dangerous even in docs
         _check_prompt_injection(strings, iocs),
-        _check_zero_width_chars(strings),
-        _check_claude_code_flags(strings, iocs),
-        _check_supply_chain(strings, iocs),
         _check_tool_description_poisoning(strings, iocs),
+        _check_zero_width_chars(strings),
         _check_tool_specific(tool_name, tool_input),
     )
 
@@ -578,8 +583,10 @@ def decide(tool_name: str, tool_input: dict) -> dict:
     )
 
     if use_llm:
-        # Case A: No regex match + high-risk tool → look for novel attacks
-        if not match and tool_name in ("Bash", "Write", "Edit"):
+        # Case A: Doc file write — regex skipped content, so LLM always reviews it.
+        #         For other tools: only trigger when no regex match found.
+        if (is_doc and tool_name in ("Write", "Edit")) or \
+                (not match and tool_name in ("Bash", "Write", "Edit")):
             llm_result = _llm.analyze(tool_name, tool_input, [])
             if llm_result["decision"] == "block" and llm_result.get("confidence", 0) >= 0.85:
                 matched = llm_result.get("reason", "LLM detected threat")
