@@ -558,6 +558,20 @@ def decide(tool_name: str, tool_input: dict) -> dict:
     )
     is_doc = _is_doc_write(tool_name, tool_input)
 
+    # Always write debug info so we can inspect what's happening
+    try:
+        _dbg = Path.home() / ".argus" / "debug-decide.json"
+        _dbg.write_text(json.dumps({
+            "tool_name": tool_name,
+            "file_path": file_path,
+            "is_doc": is_doc,
+            "trusted_path": trusted_path,
+            "tool_input_keys": list(tool_input.keys()),
+            "content_preview": str(list(tool_input.values()))[:200],
+        }, indent=2))
+    except Exception:
+        pass
+
     if trusted_path:
         # Only check the file_path itself + zero-width chars; skip all content regex
         scan_strings   = [file_path]
