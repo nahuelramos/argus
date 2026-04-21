@@ -586,7 +586,7 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         #         For other tools: only trigger when no regex match found.
         if (is_doc and tool_name in ("Write", "Edit")) or \
                 (not match and tool_name in ("Bash", "Write", "Edit")):
-            llm_result = _llm.analyze(tool_name, tool_input, [])
+            llm_result = _llm.analyze(tool_name, tool_input, [], is_doc=is_doc)
             if llm_result["decision"] == "block" and llm_result.get("confidence", 0) >= 0.85:
                 matched = llm_result.get("reason", "LLM detected threat")
                 _audit("block", "high", tool_name, f"[LLM] {matched}", tool_input)
@@ -607,7 +607,7 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         # Case B: Ambiguous regex match → LLM decides if it's real or false positive
         elif match and _check_type_from_match(match) in _LLM_ELIGIBLE_CHECKS:
             findings = [{"match": match, "severity": severity, "tool": tool_name}]
-            llm_result = _llm.analyze(tool_name, tool_input, findings)
+            llm_result = _llm.analyze(tool_name, tool_input, findings, is_doc=is_doc)
 
             if llm_result["decision"] == "allow" and llm_result.get("confidence", 0) >= 0.85:
                 # LLM says false positive → downgrade to silent allow
