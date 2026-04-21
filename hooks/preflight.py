@@ -561,6 +561,7 @@ def decide(tool_name: str, tool_input: dict) -> dict:
                 _audit("block", "high", tool_name, f"[LLM] {matched}", tool_input)
                 return {
                     "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
                         "permissionDecision": "deny",
                         "permissionDecisionReason": (
                             f"🚫 ARGUS — Action blocked [HIGH — LLM analysis]\n\n"
@@ -603,6 +604,7 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         reason = _block_message(tool_name, tool_input, match, severity) + llm_note
         return {
             "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": reason,
             }
