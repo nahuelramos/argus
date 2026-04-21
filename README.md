@@ -90,6 +90,23 @@ No action needed per session — once installed, always active.
 
 ---
 
+## Two components
+
+Argus has two complementary components:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  COMPONENT 1 — Runtime Hooks (automatic, always on)         │
+│  preflight.py + postcheck.py                                │
+│  Blocks dangerous tool calls in real time. ~50ms. No LLM.  │
+├─────────────────────────────────────────────────────────────┤
+│  COMPONENT 2 — Scanner Skill (on demand)                    │
+│  SKILL.md                                                   │
+│  Deep scan against 7 threat intel sources when you ask.     │
+│  Uses Claude + web search. Run before installing anything.  │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ## Project structure
 
 ```
@@ -97,13 +114,16 @@ argus/
 ├── hooks/
 │   ├── preflight.py        ← PreToolUse hook: blocks BEFORE execution
 │   ├── postcheck.py        ← PostToolUse hook: DLP scan on outputs
-│   ├── install.sh          ← Registers hooks in settings.json
-│   └── uninstall.sh        ← Removes them
+│   ├── install.sh          ← Registers hooks + installs skill
+│   └── uninstall.sh        ← Removes everything
+├── scripts/
+│   └── local-scan.py       ← Static file analyzer (used by the skill)
 ├── data/
 │   ├── iocs.json           ← Indicators of Compromise database
 │   └── allowlist.json      ← Template for your custom exceptions
 ├── tests/
 │   └── test_hooks.py       ← 120 regression tests
+├── SKILL.md                ← Scanner skill: threat intel + static analysis
 ├── argus-report.py         ← CLI to view the audit log
 └── README.md
 ```
@@ -354,6 +374,55 @@ Most common sections to customize:
   "patterns": ["~/.your-app/secrets/"]
 }
 ```
+
+---
+
+## Scanner skill — threat intelligence on demand
+
+Once installed, tell Claude in plain English:
+
+```
+"scan my MCPs"
+"is the GitHub MCP safe to install?"
+"audit all my skills"
+"scan @modelcontextprotocol/server-filesystem before I install it"
+```
+
+Claude will run a full scan across all 7 sources and report back:
+
+### Sources checked per MCP/skill
+
+| Source | What it checks | API |
+|---|---|---|
+| GitHub Advisory DB | GHSA advisories by npm/pip package | `api.github.com/advisories` |
+| Google OSV | Cross-ecosystem CVEs with version ranges | `api.osv.dev/v1/query` |
+| NIST NVD | Full CVE database with CVSS scores | `services.nvd.nist.gov` |
+| npm / PyPI registry | Deprecated/yanked packages, version lag | `registry.npmjs.org` |
+| vulnerablemcp.info | MCP-specific confirmed incidents | Web scrape |
+| Snyk | Security advisories by package | `security.snyk.io` |
+| Reddit community | User-reported malicious behavior | `reddit.com/r/mcp` + WebSearch |
+| Local static analysis | IOC patterns, entropy, coherence check | `scripts/local-scan.py` |
+
+### Example scan output
+
+```
+Argus Scan Complete — 2026-04-20
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Scanned: 4 MCPs · 2 skills
+Sources: GHSA · OSV · NVD · npm · vulnerablemcp.info · Snyk · Reddit
+
+CRITICAL  ▸ @evil/mcp-server (known backdoor — vulnerablemcp.info)
+HIGH      ▸ @scope/old-server (CVE-2025-49596, CVSS 9.4)
+MEDIUM    ▸ my-local-skill (coherence violation: accesses ~/.ssh)
+CLEAN     ▸ @modelcontextprotocol/server-filesystem ✓
+           ▸ @modelcontextprotocol/server-github ✓
+           ▸ argus-scanner ✓
+
+Full report: .security/argus-scan-2026-04-20.md
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+Reports are saved to `.security/argus-scan-YYYY-MM-DD.md`.
 
 ---
 

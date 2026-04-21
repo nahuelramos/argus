@@ -30,4 +30,12 @@ jq --arg pre "$PRE_CMD" --arg post "$POST_CMD" '
   . | rm_hook("PreToolUse"; $pre) | rm_hook("PostToolUse"; $post)
 ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
 
+# ── Remove skill ──────────────────────────────────────────────────────────────
+if [[ "$SCOPE" == "--user" ]]; then
+  SKILL_DIR="$HOME/.claude/skills/argus-scanner"
+else
+  SKILL_DIR="$(pwd)/.claude/skills/argus-scanner"
+fi
+[[ -d "$SKILL_DIR" ]] && rm -rf "$SKILL_DIR" && echo "Skill removed: $SKILL_DIR"
+
 echo "✓ Argus uninstalled ($SCOPE)"

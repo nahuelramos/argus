@@ -55,15 +55,30 @@ jq --arg pre "$PRE_CMD" --arg post "$POST_CMD" '
 # ── Create Argus home dirs ────────────────────────────────────────────────────
 mkdir -p "$HOME/.argus/logs"
 
+# ── Install the scanner skill ─────────────────────────────────────────────────
+SKILL_SRC="$SCRIPT_DIR/../SKILL.md"
+if [[ -f "$SKILL_SRC" ]]; then
+  if [[ "$SCOPE" == "--user" ]]; then
+    SKILL_DIR="$HOME/.claude/skills/argus-scanner"
+  else
+    SKILL_DIR="$(pwd)/.claude/skills/argus-scanner"
+  fi
+  mkdir -p "$SKILL_DIR"
+  cp "$SKILL_SRC" "$SKILL_DIR/SKILL.md"
+  echo "Skill installed: $SKILL_DIR/SKILL.md"
+fi
+
 # ── Verify ───────────────────────────────────────────────────────────────────
 echo ""
 echo "✓  Argus installed ($SCOPE)"
-echo "   PreToolUse  hook → $PREFLIGHT"
-echo "   PostToolUse hook → $POSTCHECK"
-echo "   Audit log        → $HOME/.argus/logs/audit.jsonl"
+echo "   PreToolUse  hook  → $PREFLIGHT"
+echo "   PostToolUse hook  → $POSTCHECK"
+echo "   Scanner skill     → $SKILL_DIR/SKILL.md"
+echo "   Audit log         → $HOME/.argus/logs/audit.jsonl"
 echo ""
 echo "Run tests:"
 echo "   python3 -m pytest $SCRIPT_DIR/../tests/ -v"
 echo ""
-echo "Check the hook is registered:"
-echo "   cat $SETTINGS | python3 -m json.tool | grep -A5 PreToolUse"
+echo "Usage:"
+echo "   Runtime protection is automatic."
+echo "   For a full threat intel scan, tell Claude: 'scan my MCPs'"
