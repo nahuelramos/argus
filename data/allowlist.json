@@ -1,14 +1,174 @@
 {
-  "_comment": "Argus allowlist — add paths, domains, or commands that should never be blocked.",
+  "_comment": "Argus allowlist — customize for your environment.",
+
   "paths": [
     "/tmp/",
     "/var/tmp/"
   ],
+
   "domains": [
     "api.anthropic.com",
     "api.github.com",
     "github.com",
     "raw.githubusercontent.com"
   ],
-  "commands": []
+
+  "trusted_mcps": [],
+
+  "integrations": {
+    "_comment": "Remove the integrations you don't use. Add your own.",
+
+    "aws": {
+      "description": "AWS CLI and SDK — authorized cloud operations",
+      "allowed_patterns": [
+        "aws s3 ls", "aws s3 cp", "aws s3 sync",
+        "aws ec2 describe", "aws ec2 start", "aws ec2 stop",
+        "aws sts get-caller-identity",
+        "aws cloudformation describe", "aws cloudformation list",
+        "aws logs", "aws cloudwatch",
+        "aws lambda list", "aws lambda invoke",
+        "aws rds describe", "aws rds list",
+        "aws ssm get-parameter", "aws ssm describe"
+      ],
+      "blocked_patterns": [
+        "aws iam create-user", "aws iam attach-role-policy",
+        "aws iam put-role-policy", "aws iam create-access-key",
+        "aws s3 sync /etc", "aws s3 sync ~/.ssh",
+        "aws ec2 authorize-security-group-ingress --protocol all"
+      ],
+      "allowed_domains": [
+        "s3.amazonaws.com", "ec2.amazonaws.com",
+        "sts.amazonaws.com", "iam.amazonaws.com",
+        "lambda.amazonaws.com", "rds.amazonaws.com",
+        "cloudformation.amazonaws.com"
+      ]
+    },
+
+    "google_calendar": {
+      "description": "Google Calendar API — read and create events",
+      "allowed_patterns": [],
+      "blocked_patterns": [],
+      "allowed_domains": [
+        "calendar.googleapis.com",
+        "oauth2.googleapis.com",
+        "accounts.google.com"
+      ]
+    },
+
+    "google_drive": {
+      "description": "Google Drive API — read and upload files",
+      "allowed_patterns": [],
+      "blocked_patterns": [],
+      "allowed_domains": [
+        "drive.googleapis.com",
+        "docs.googleapis.com",
+        "sheets.googleapis.com",
+        "oauth2.googleapis.com"
+      ]
+    },
+
+    "github": {
+      "description": "GitHub CLI and API — repos, PRs, issues",
+      "allowed_patterns": [
+        "gh repo", "gh pr", "gh issue", "gh release",
+        "git clone", "git pull", "git push", "git fetch",
+        "git status", "git log", "git diff", "git add", "git commit"
+      ],
+      "blocked_patterns": [
+        "gh auth token", "git config --global credential"
+      ],
+      "allowed_domains": [
+        "api.github.com", "github.com",
+        "raw.githubusercontent.com", "objects.githubusercontent.com"
+      ]
+    },
+
+    "slack": {
+      "description": "Slack API — send messages and read channels",
+      "allowed_patterns": [],
+      "blocked_patterns": [],
+      "allowed_domains": [
+        "slack.com", "api.slack.com",
+        "files.slack.com"
+      ]
+    },
+
+    "notion": {
+      "description": "Notion API — read and write pages",
+      "allowed_patterns": [],
+      "blocked_patterns": [],
+      "allowed_domains": [
+        "api.notion.com", "notion.com"
+      ]
+    },
+
+    "linear": {
+      "description": "Linear API — issues and projects",
+      "allowed_patterns": [],
+      "blocked_patterns": [],
+      "allowed_domains": [
+        "api.linear.app", "linear.app"
+      ]
+    },
+
+    "jira": {
+      "description": "Jira / Atlassian API",
+      "allowed_patterns": [],
+      "blocked_patterns": [],
+      "allowed_domains": [
+        "atlassian.net", "atlassian.com",
+        "api.atlassian.com"
+      ]
+    },
+
+    "postgres": {
+      "description": "PostgreSQL — local or RDS database",
+      "allowed_patterns": [
+        "psql", "pg_dump", "pg_restore",
+        "SELECT", "INSERT", "UPDATE", "DELETE",
+        "CREATE TABLE", "ALTER TABLE", "DROP TABLE"
+      ],
+      "blocked_patterns": [
+        "DROP DATABASE", "DROP SCHEMA",
+        "COPY TO '/etc'", "COPY TO '/home'"
+      ],
+      "allowed_domains": []
+    },
+
+    "docker": {
+      "description": "Docker — build and run containers",
+      "allowed_patterns": [
+        "docker build", "docker run", "docker ps",
+        "docker logs", "docker exec", "docker stop",
+        "docker pull", "docker push", "docker images",
+        "docker compose up", "docker compose down"
+      ],
+      "blocked_patterns": [
+        "docker run --privileged",
+        "docker run -v /:/",
+        "docker run --pid=host",
+        "docker run --net=host --privileged"
+      ],
+      "allowed_domains": [
+        "hub.docker.com", "registry-1.docker.io",
+        "registry.docker.io"
+      ]
+    },
+
+    "vercel": {
+      "description": "Vercel deployments",
+      "allowed_patterns": ["vercel", "vc "],
+      "blocked_patterns": [],
+      "allowed_domains": ["api.vercel.com", "vercel.com"]
+    },
+
+    "stripe": {
+      "description": "Stripe API — payments (test mode only recommended)",
+      "allowed_patterns": [],
+      "blocked_patterns": [],
+      "allowed_domains": [
+        "api.stripe.com", "stripe.com"
+      ]
+    }
+  }
 }

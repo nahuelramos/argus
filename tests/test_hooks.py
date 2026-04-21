@@ -3,8 +3,12 @@ Argus test suite — preflight (PreToolUse) and postcheck (PostToolUse).
 Run: python3 -m pytest tests/ -v
 """
 import json
+import os
 import sys
 from pathlib import Path
+
+# Disable LLM analysis during tests — deterministic results only
+os.environ["ARGUS_NO_LLM"] = "1"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
 import preflight

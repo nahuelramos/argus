@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
 Argus — PreToolUse security hook for Claude Code.
-Blocks credential theft, reverse shells, obfuscated payloads, exfiltration,
-supply chain abuse, and invisible-character prompt injection before execution.
-Zero LLM cost, ~30-80ms locally. Fails open — never blocks Claude due to our bugs.
+
+Three-stage pipeline:
+  Stage 0 — Integration check: is this an explicitly trusted operation?
+  Stage 1 — Regex/IOC matching: fast local pattern checks
+  Stage 2 — LLM analysis (Claude Haiku): intelligent review of ambiguous cases
+
+Fails open — any bug in Argus lets Claude proceed normally.
 """
 import json
 import math
@@ -13,6 +17,20 @@ import sys
 import time
 import hashlib
 from collections import Counter
+from pathlib import Path as _Path
+
+# Stage 2 LLM analysis (optional — only runs when ANTHROPIC_API_KEY is set)
+try:
+    import llm_analysis as _llm
+    _LLM_AVAILABLE = True
+except ImportError:
+    _LLM_AVAILABLE = False
+
+# Checks where LLM second opinion adds the most value (high false-positive rate)
+_LLM_ELIGIBLE_CHECKS = {
+    "prompt_injection", "obfuscation", "tool_description_poisoning",
+    "zero_width_char", "supply_chain",
+}
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -450,6 +468,42 @@ def _warn_message(tool_name: str, match: str, severity: str) -> str:
     )
 
 
+# ── Stage 0: Integration check ───────────────────────────────────────────────
+
+def _check_trusted_integrations(strings: list, tool_name: str, allowlist: dict) -> bool:
+    """
+    Return True if this operation matches an explicitly configured trusted integration.
+    If True, skip all further checks — the user said this is OK.
+    """
+    integrations = allowlist.get("integrations", {})
+    if not integrations:
+        return False
+
+    blob = " ".join(strings).lower()
+
+    for name, cfg in integrations.items():
+        if not isinstance(cfg, dict):
+            continue
+
+        # Check allowed domains
+        for domain in cfg.get("allowed_domains", []):
+            if domain.lower() in blob:
+                # Make sure it's not in the blocked list too
+                blocked = cfg.get("blocked_patterns", [])
+                if not any(b.lower() in blob for b in blocked):
+                    return True
+
+        # Check allowed command patterns
+        for pattern in cfg.get("allowed_patterns", []):
+            if pattern.lower() in blob:
+                # Make sure it's not blocked
+                blocked = cfg.get("blocked_patterns", [])
+                if not any(b.lower() in blob for b in blocked):
+                    return True
+
+    return False
+
+
 # ── Decision engine ───────────────────────────────────────────────────────────
 
 def _best(*pairs) -> tuple:
@@ -465,6 +519,11 @@ def decide(tool_name: str, tool_input: dict) -> dict:
     allowlist = _allowlist()
     strings   = _strings(tool_input)
 
+    # ── Stage 0: Trusted integration? Allow immediately ───────────────────────
+    if _check_trusted_integrations(strings, tool_name, allowlist):
+        return {}
+
+    # ── Stage 1: Regex / IOC checks ───────────────────────────────────────────
     match, severity = _best(
         _check_sensitive_paths(strings, iocs, allowlist),
         _check_env_vars(strings, iocs),
@@ -479,15 +538,63 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         _check_tool_specific(tool_name, tool_input),
     )
 
+    # ── Stage 2: LLM analysis (only when useful) ──────────────────────────────
+    llm_result = None
+    use_llm    = (
+        _LLM_AVAILABLE
+        and os.environ.get("ANTHROPIC_API_KEY")
+        and not os.environ.get("ARGUS_NO_LLM")  # set this in tests or CI
+    )
+
+    if use_llm:
+        # Case A: No regex match + high-risk tool → look for novel attacks
+        if not match and tool_name in ("Bash", "Write", "Edit"):
+            llm_result = _llm.analyze(tool_name, tool_input, [])
+            if llm_result["decision"] == "block" and llm_result.get("confidence", 0) >= 0.85:
+                matched = llm_result.get("reason", "LLM detected threat")
+                _audit("block", "high", tool_name, f"[LLM] {matched}", tool_input)
+                return {
+                    "hookSpecificOutput": {
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": (
+                            f"🚫 ARGUS — Action blocked [HIGH — LLM analysis]\n\n"
+                            f"Tool: {tool_name}\n"
+                            f"Reason: {matched}\n"
+                            f"(No regex pattern matched, but Claude Haiku flagged this as malicious)\n\n"
+                            f"Audit log: ~/.argus/logs/audit.jsonl"
+                        ),
+                    }
+                }
+
+        # Case B: Ambiguous regex match → LLM decides if it's real or false positive
+        elif match and _check_type_from_match(match) in _LLM_ELIGIBLE_CHECKS:
+            findings = [{"match": match, "severity": severity, "tool": tool_name}]
+            llm_result = _llm.analyze(tool_name, tool_input, findings)
+
+            if llm_result["decision"] == "allow" and llm_result.get("confidence", 0) >= 0.85:
+                # LLM says false positive → downgrade to silent allow
+                _audit("allow_llm_override", severity, tool_name,
+                       f"[LLM override] {llm_result.get('reason','')}", tool_input)
+                return {}
+
+            if llm_result["decision"] == "block" and llm_result.get("confidence", 0) >= 0.75:
+                # LLM confirms threat → upgrade severity
+                severity = "high"
+
     if not match:
         return {}
 
     severity = _escalate_if_burst(severity)
     rank     = SEVERITY_RANK.get(severity, 0)
 
+    llm_note = ""
+    if llm_result and llm_result.get("source") == "llm":
+        conf = int(llm_result.get("confidence", 0) * 100)
+        llm_note = f"\nLLM confirmation: {llm_result.get('reason','')} ({conf}% confidence)"
+
     if rank >= SEVERITY_RANK["high"]:
         _audit("block", severity, tool_name, match, tool_input)
-        reason = _block_message(tool_name, tool_input, match, severity)
+        reason = _block_message(tool_name, tool_input, match, severity) + llm_note
         return {
             "hookSpecificOutput": {
                 "permissionDecision": "deny",
@@ -497,8 +604,24 @@ def decide(tool_name: str, tool_input: dict) -> dict:
 
     _audit("warn", severity, tool_name, match, tool_input)
     return {
-        "additionalContext": _warn_message(tool_name, match, severity)
+        "additionalContext": _warn_message(tool_name, match, severity) + llm_note
     }
+
+
+def _check_type_from_match(match: str) -> str:
+    """Infer which check produced a match, to decide if LLM review is useful."""
+    m = match.lower()
+    if "ignore" in m or "bypass" in m or "previous" in m or "system" in m:
+        return "prompt_injection"
+    if "base64" in m or "\\x" in m or "__import__" in m or "iex" in m:
+        return "obfuscation"
+    if "zero-width" in m or "u+200" in m:
+        return "zero_width_char"
+    if "telemetry" in m or "setup_bun" in m or "postinstall" in m:
+        return "supply_chain"
+    if "<important>" in m or "hidden instructions" in m:
+        return "tool_description_poisoning"
+    return "other"
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
