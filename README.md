@@ -280,10 +280,17 @@ Restart Claude Desktop after installing. Claude will have these tools:
 
 ### Manual install — Claude Web
 
-1. Open `WEB_INSTRUCTIONS.md` from this repo
-2. Copy the full content
-3. Go to **claude.ai → Projects → Your Project → Edit Instructions**
-4. Paste it in
+1. Run `npx github:nahuelramos/argus --web` — copies the security policy to your clipboard
+   - Or open `WEB_INSTRUCTIONS.md` from this repo and copy the full content manually
+2. Go to **[claude.ai](https://claude.ai)** and open **Projects** in the left sidebar
+3. Select an existing project or create a new one
+4. Inside the project, click **Edit Instructions** (top-right corner)
+5. Paste with `Cmd+V` (macOS) or `Ctrl+V` (Windows/Linux) and click **Save**
+
+> **Note:** Claude Web does not have system-level hooks. The policy works through
+> Claude following the instructions cooperatively. For guaranteed enforcement,
+> use Argus with **Claude Code CLI** which intercepts every tool call via
+> `PreToolUse`/`PostToolUse` hooks before execution.
 
 ---
 

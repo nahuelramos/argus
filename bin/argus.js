@@ -459,11 +459,15 @@ async function main() {
     console.log(`  ${cyan('→')} ${yellow('Restart Claude Desktop')} to activate the MCP server`);
   }
   if (results.some(r => r.platform === 'Claude Web' && r.ok)) {
-    if (results.find(r => r.platform === 'Claude Web').detail === 'Copied to clipboard') {
-      console.log(`  ${cyan('→')} Paste into ${bold('claude.ai → Projects → Edit Instructions')}`);
-    } else {
-      console.log(`  ${cyan('→')} Open ${bold('WEB_INSTRUCTIONS.md')} and paste into claude.ai Project Instructions`);
-    }
+    const webDetail = results.find(r => r.platform === 'Claude Web').detail;
+    const webSource = webDetail === 'Copied to clipboard'
+      ? 'instructions are in your clipboard'
+      : `open ${bold('WEB_INSTRUCTIONS.md')} and copy the content`;
+    console.log(`  ${cyan('→')} Claude Web — ${webSource}`);
+    console.log(`     ${dim('1.')} Go to ${bold('claude.ai')} → ${bold('Projects')} → select or create a project`);
+    console.log(`     ${dim('2.')} Click ${bold('Edit Instructions')} (top right inside the project)`);
+    console.log(`     ${dim('3.')} Paste with ${bold('Cmd+V')} and click ${bold('Save')}`);
+    console.log(`     ${dim('ℹ')}  Web policy is best-effort — for guaranteed blocking use Claude Code CLI`);
   }
 
   console.log(`\n  Audit log: ${dim('~/.argus/logs/audit.jsonl')}`);
