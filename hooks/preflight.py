@@ -614,11 +614,15 @@ def decide(tool_name: str, tool_input: dict) -> dict:
     )
 
     if use_llm:
-        # Case A: Doc file write — regex skipped content, so LLM always reviews it.
-        #         For other tools: only trigger when no regex match found.
-        if (is_doc and tool_name in ("Write", "Edit")) or \
-                (not match and tool_name in ("Bash", "Write", "Edit")):
-            llm_result = _llm.analyze(tool_name, tool_input, [], is_doc=is_doc)
+        # LLM always runs for Bash/Write/Edit — acts as a second opinion on top of regex.
+        # For regex blocks: LLM can downgrade false positives or confirm/upgrade severity.
+        # For regex misses: LLM catches novel attacks that patterns didn't detect.
+        if tool_name in ("Bash", "Write", "Edit", "NotebookEdit"):
+            findings = ([{"match": match, "severity": severity, "tool": tool_name}]
+                        if match else [])
+            llm_result = _llm.analyze(tool_name, tool_input, findings, is_doc=is_doc)
+
+            # LLM says block → always block regardless of regex result
             if llm_result["decision"] == "block" and llm_result.get("confidence", 0) >= 0.85:
                 matched = llm_result.get("reason", "LLM detected threat")
                 _audit("block", "high", tool_name, f"[LLM] {matched}", tool_input)
@@ -630,25 +634,20 @@ def decide(tool_name: str, tool_input: dict) -> dict:
                             f"🚫 ARGUS — Action blocked [HIGH — LLM analysis]\n\n"
                             f"Tool: {tool_name}\n"
                             f"Reason: {matched}\n"
-                            f"(No regex pattern matched, but Claude Haiku flagged this as malicious)\n\n"
+                            f"({'No regex pattern matched, but ' if not match else ''}Claude Haiku flagged this as malicious)\n\n"
                             f"Audit log: ~/.argus/logs/audit.jsonl"
                         ),
                     }
                 }
 
-        # Case B: Ambiguous regex match → LLM decides if it's real or false positive
-        elif match and _check_type_from_match(match) in _LLM_ELIGIBLE_CHECKS:
-            findings = [{"match": match, "severity": severity, "tool": tool_name}]
-            llm_result = _llm.analyze(tool_name, tool_input, findings, is_doc=is_doc)
-
-            if llm_result["decision"] == "allow" and llm_result.get("confidence", 0) >= 0.85:
-                # LLM says false positive → downgrade to silent allow
+            # LLM says false positive on a regex match → downgrade to allow
+            if match and llm_result["decision"] == "allow" and llm_result.get("confidence", 0) >= 0.85:
                 _audit("allow_llm_override", severity, tool_name,
                        f"[LLM override] {llm_result.get('reason','')}", tool_input)
                 return {}
 
-            if llm_result["decision"] == "block" and llm_result.get("confidence", 0) >= 0.75:
-                # LLM confirms threat → upgrade severity
+            # LLM confirms regex match → upgrade severity to high
+            if match and llm_result["decision"] == "block" and llm_result.get("confidence", 0) >= 0.75:
                 severity = "high"
 
     if not match:
