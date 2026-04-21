@@ -183,20 +183,33 @@ def _analyze_via_cli(prompt: str) -> dict | None:
     """
     Run analysis via `claude -p` using the active Claude Code session.
     Returns parsed result dict, or None if CLI is unavailable or fails.
+
+    Sets ARGUS_NO_LLM=1 in the subprocess env to prevent infinite recursion
+    (the subprocess also has hooks active, but they'll skip the LLM stage).
     """
+    # Find the claude binary — PATH may be minimal when running as a hook subprocess
+    import shutil
+    claude_bin = shutil.which("claude") or shutil.which(
+        "claude", path="/usr/local/bin:/opt/homebrew/bin:/usr/bin:" + os.environ.get("PATH", "")
+    )
+    if not claude_bin:
+        return None
+
     try:
         full_prompt = SYSTEM_PROMPT + "\n\n" + prompt
+        env = {**os.environ, "ARGUS_NO_LLM": "1"}  # prevent hook recursion
         result = subprocess.run(
-            ["claude", "-p", full_prompt, "--output-format", "json"],
+            [claude_bin, "-p", full_prompt, "--output-format", "json"],
             capture_output=True,
             text=True,
             timeout=TIMEOUT,
+            env=env,
         )
         if result.returncode != 0:
             return None
-        # claude --output-format json wraps response in {"result": "..."}
+        # claude --output-format json wraps response in {"type":"result","result":"..."}
         outer = json.loads(result.stdout)
-        text  = outer.get("result") or outer.get("content") or result.stdout
+        text  = outer.get("result") or result.stdout
         if isinstance(text, str):
             text = text.strip()
         parsed = json.loads(text)
