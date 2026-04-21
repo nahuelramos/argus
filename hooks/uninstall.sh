@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Argus — remove hooks from Claude Code settings
+set -euo pipefail
+
+SCOPE="${1:---user}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PREFLIGHT="$SCRIPT_DIR/preflight.py"
+POSTCHECK="$SCRIPT_DIR/postcheck.py"
+
+case "$SCOPE" in
+  --user)    SETTINGS="$HOME/.claude/settings.json" ;;
+  --project) SETTINGS="$(pwd)/.claude/settings.json" ;;
+  *)         echo "Usage: $0 [--user|--project]" && exit 1 ;;
+esac
+
+[[ -f "$SETTINGS" ]] || { echo "Settings not found: $SETTINGS"; exit 1; }
+
+BACKUP="$SETTINGS.argus-backup-$(date +%Y%m%d%H%M%S)"
+cp "$SETTINGS" "$BACKUP"
+echo "Backup saved: $BACKUP"
+
+PRE_CMD="python3 $PREFLIGHT"
+POST_CMD="python3 $POSTCHECK"
+
+jq --arg pre "$PRE_CMD" --arg post "$POST_CMD" '
+  def rm_hook(section; cmd):
+    if .hooks[section] then
+      .hooks[section] = [.hooks[section][] | select(.hooks[]?.command != cmd)]
+    else . end;
+  . | rm_hook("PreToolUse"; $pre) | rm_hook("PostToolUse"; $post)
+' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
+
+echo "✓ Argus uninstalled ($SCOPE)"

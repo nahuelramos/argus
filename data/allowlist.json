@@ -1,0 +1,14 @@
+{
+  "_comment": "Argus allowlist — add paths, domains, or commands that should never be blocked.",
+  "paths": [
+    "/tmp/",
+    "/var/tmp/"
+  ],
+  "domains": [
+    "api.anthropic.com",
+    "api.github.com",
+    "github.com",
+    "raw.githubusercontent.com"
+  ],
+  "commands": []
+}

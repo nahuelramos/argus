@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+logs/
+*.jsonl
+*.argus-backup-*
+.rate.json
+.DS_Store

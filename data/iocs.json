@@ -1,0 +1,295 @@
+{
+  "schema_version": "3.0",
+  "description": "Argus IOC database — built from threat intel: MCP incidents, supply chain attacks, CVEs, exfil services",
+  "last_updated": "2026-04-20",
+  "sources": [
+    "Shai-Hulud npm campaign (Unit42/CISA 2025)",
+    "S1ngularity npm attack (2025)",
+    "Postmark MCP backdoor (Sept 2025)",
+    "CVE-2025-54794/54795 Claude Code path injection",
+    "CVE-2025-49596 MCP Inspector RCE",
+    "OWASP Top 10 LLM 2025",
+    "Gitleaks/TruffleHog rule sets",
+    "Invariant Labs MCP poisoning research"
+  ],
+
+  "sensitive_paths": {
+    "patterns": [
+      "~/.ssh/", "~/.ssh/id_rsa", "~/.ssh/id_ed25519", "~/.ssh/id_ecdsa",
+      "~/.ssh/id_dsa", "~/.ssh/config", "~/.ssh/authorized_keys",
+      "~/.aws/credentials", "~/.aws/config",
+      "~/.gnupg/", "~/.pgp/",
+      "~/.config/gh/hosts.yml",
+      "~/.netrc", "~/.pgpass",
+      "~/.docker/config.json",
+      "~/.kube/config",
+      "~/.npmrc", "~/.pypirc", "~/.gem/credentials",
+      "~/.config/gcloud/", "~/.config/gcloud/credentials.db",
+      "~/.azure/", "~/.azure/accessTokens.json",
+      "~/.terraform.d/credentials.tfrc.json",
+      "~/.vault-token",
+      "~/.config/op/", "~/.1password/",
+      "~/.password-store/",
+      "~/.local/share/keyrings/",
+      "~/.bash_history", "~/.zsh_history", "~/.fish_history",
+      "/etc/shadow", "/etc/passwd", "/etc/sudoers", "/etc/sudoers.d/",
+      "/etc/ssl/private/", "/etc/ssh/ssh_host_rsa_key",
+      "/etc/ssh/ssh_host_ed25519_key",
+      "/proc/self/environ", "/proc/1/environ"
+    ],
+    "regex_patterns": [
+      "\\.env(\\.|$|/)",
+      "(?i)credentials?\\.json",
+      "(?i)secrets?\\.(json|ya?ml|env|toml|ini)",
+      "(?i)api[_-]?keys?\\.(json|txt|env|toml)",
+      "(?i)private[_-]?key",
+      "(?i)terraform\\.tfstate(\\.backup)?$",
+      "(?i)\\.pem$", "(?i)\\.p12$", "(?i)\\.pfx$",
+      "(?i)\\.jks$", "(?i)\\.keystore$",
+      "(?i)service[_-]?account.*\\.json",
+      "(?i)client[_-]?secret",
+      "(?i)\\.htpasswd$",
+      "(?i)wallet\\.dat$",
+      "(?i)\\.git/config$",
+      "(?i)id_[re]sa$"
+    ]
+  },
+
+  "sensitive_env_vars": {
+    "patterns": [
+      "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ACCESS_KEY_ID",
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY", "OPENAI_ORG_ID",
+      "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT", "GITHUB_ACTIONS_TOKEN",
+      "GITLAB_TOKEN", "GITLAB_CI_TOKEN", "CI_JOB_TOKEN",
+      "STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY",
+      "DATABASE_URL", "DB_PASSWORD", "POSTGRES_PASSWORD", "MYSQL_ROOT_PASSWORD",
+      "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_ANON_KEY",
+      "AZURE_CLIENT_SECRET", "AZURE_CLIENT_ID", "AZURE_TENANT_ID",
+      "GOOGLE_APPLICATION_CREDENTIALS", "GCLOUD_SERVICE_ACCOUNT_KEY",
+      "VAULT_TOKEN", "VAULT_ADDR",
+      "DATADOG_API_KEY", "DD_API_KEY",
+      "SENDGRID_API_KEY",
+      "NEW_RELIC_LICENSE_KEY",
+      "TWILIO_AUTH_TOKEN", "TWILIO_ACCOUNT_SID",
+      "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET",
+      "DISCORD_BOT_TOKEN",
+      "HEROKU_API_KEY",
+      "VERCEL_TOKEN",
+      "NETLIFY_AUTH_TOKEN",
+      "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY",
+      "DIGITALOCEAN_TOKEN",
+      "LINODE_TOKEN",
+      "NPM_TOKEN",
+      "PYPI_API_TOKEN",
+      "DOCKER_PASSWORD", "DOCKER_HUB_PASSWORD",
+      "FIREBASE_TOKEN", "FIREBASE_ADMIN_SDK",
+      "MAPBOX_ACCESS_TOKEN",
+      "ALGOLIA_ADMIN_API_KEY",
+      "SHOPIFY_API_SECRET",
+      "JIRA_API_TOKEN", "CONFLUENCE_API_TOKEN",
+      "SONAR_TOKEN", "CODECOV_TOKEN",
+      "HUGGINGFACE_TOKEN", "HF_TOKEN",
+      "REPLICATE_API_TOKEN",
+      "COHERE_API_KEY",
+      "PINECONE_API_KEY",
+      "WEAVIATE_API_KEY"
+    ],
+    "regex_patterns": [
+      "(?i).*_API_KEY$",
+      "(?i).*_SECRET(_KEY)?$",
+      "(?i).*_TOKEN$",
+      "(?i).*_PASSWORD$",
+      "(?i).*_PRIVATE_KEY$",
+      "(?i).*_ACCESS_KEY$",
+      "(?i).*_AUTH_KEY$",
+      "(?i).*_SIGNING_KEY$",
+      "(?i)^TF_VAR_.*(SECRET|TOKEN|PASSWORD|KEY)",
+      "(?i)^SOPS_.*",
+      "(?i)^KUBECONFIG$",
+      "(?i)^PGPASSWORD$"
+    ]
+  },
+
+  "suspicious_network": {
+    "known_malicious_domains": [
+      {"domain": "giftshop.club", "incident": "Postmark MCP backdoor (v1.0.16, Sept 2025)"},
+      {"domain": "shai-hulud-c2.io", "incident": "Shai-Hulud npm supply chain (2025)"}
+    ],
+    "suspicious_tlds": [
+      ".tk", ".ml", ".ga", ".cf", ".gq",
+      ".xyz", ".top", ".work", ".click",
+      ".icu", ".buzz", ".cam", ".cfd",
+      ".monster", ".rest", ".surf", ".zip", ".mov"
+    ],
+    "exfil_services": [
+      "pastebin.com", "paste.ee", "hastebin.com", "dpaste.com",
+      "termbin.com", "transfer.sh", "0x0.st", "file.io",
+      "bashupload.com", "temp.sh", "ix.io", "sprunge.us",
+      "clbin.com", "paste.rs", "bpa.st", "rentry.co", "ghostbin.com",
+      "webhook.site", "requestbin.com", "requestbin.net",
+      "pipedream.net", "webhook.io",
+      "burpcollaborator.net", "interactsh.com", "canarytokens.com",
+      "ngrok.io", "ngrok.app",
+      "serveo.net", "localhost.run", "tunnelto.dev", "bore.pub", "expose.sh"
+    ],
+    "suspicious_patterns": [
+      "https?://\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}(:\\d+)?(/|$)",
+      "(?i)discord\\.com/api/webhooks/\\d+/",
+      "(?i)hooks\\.slack\\.com/services/",
+      "(?i)t\\.me/[^/]+\\?start="
+    ]
+  },
+
+  "dangerous_commands": {
+    "patterns": [
+      "curl\\s+[^|]*\\|\\s*(bash|sh|zsh|dash|python3?|perl|ruby|node)",
+      "wget\\s+[^|]*\\|\\s*(bash|sh|zsh|dash|python3?|perl|ruby|node)",
+      "curl\\s+.*(-X\\s+POST|-d\\s+|--data[=-])",
+      "wget\\s+.*--post-(data|file)",
+      "(?i)nc\\s+(-e|-c|--exec|--sh-exec)",
+      "(?i)ncat\\s+(-e|-c|--exec|--sh-exec)",
+      "(?i)bash\\s+-i\\s+>&?\\s*/dev/tcp/",
+      "(?i)/dev/tcp/[0-9a-zA-Z.-]+/\\d+",
+      "(?i)/dev/udp/[0-9a-zA-Z.-]+/\\d+",
+      "(?i)python3?\\s+-c\\s+['\"].*socket.*connect",
+      "(?i)python3?\\s+-c\\s+['\"].*subprocess.*shell",
+      "(?i)perl\\s+-e\\s+['\"].*socket",
+      "(?i)(^|;|\\|[|]?|\\()\\s*(eval|exec)\\s*[\"'(\\$`]",
+      "(?i)(^|;|\\|[|]?)\\s*dd\\s+if=.*of=/dev/",
+      "chmod\\s+[o+]?s|chmod\\s+[0-7]*[24][0-7][0-7]",
+      "chmod\\s+(u\\+s|g\\+s|777|4777|2777|6777)",
+      ">>\\s*~/\\.(bash|zsh|profile|bashrc|zshrc|bash_logout|zlogout)",
+      "(?i)crontab\\s+-[el]",
+      "(?i)\\(\\s*crontab\\s+-l",
+      "(?i)systemctl\\s+enable\\s+",
+      "(?i)launchctl\\s+(load|bootstrap)\\s+",
+      "(?i)sudo\\s+-S\\s+",
+      "(?i)NOPASSWD\\s*:\\s*ALL",
+      "(?i)LD_PRELOAD\\s*=",
+      "(?i)DYLD_INSERT_LIBRARIES\\s*=",
+      "(?i)LD_LIBRARY_PATH\\s*=.*/tmp",
+      "(?i)nsenter\\s+",
+      "(?i)mount\\s+.*--bind.*(proc|sys|dev)",
+      "(?i)docker\\s+run.*--privileged",
+      "(?i)docker\\s+run.*-v\\s+/:/",
+      "(?i)docker\\s+run.*--pid=host",
+      "(?i)shred\\s+.*(vfz|-n\\s+\\d+).*~/",
+      "(?i)IEX\\s*\\(|Invoke-Expression",
+      "(?i)Set-ExecutionPolicy.*Bypass",
+      "(?i)Add-MpPreference.*-ExclusionPath"
+    ]
+  },
+
+  "claude_code_abuse": {
+    "_comment": "Flags that disable Claude Code safety mechanisms — used by S1ngularity npm malware",
+    "patterns": [
+      "--dangerously-skip-permissions",
+      "--yolo",
+      "--trust-all-tools",
+      "--no-verify",
+      "--allow-all-tools",
+      "--skip-confirmation"
+    ]
+  },
+
+  "supply_chain": {
+    "_comment": "Files and patterns associated with confirmed supply chain attacks",
+    "malicious_files": [
+      "telemetry.js",
+      "setup_bun.js",
+      "bun_environment.js",
+      "shai-hulud-workflow.yml"
+    ],
+    "postinstall_patterns": [
+      "(?i)postinstall.*curl.*webhook",
+      "(?i)postinstall.*wget.*http",
+      "(?i)postinstall.*discord\\.com",
+      "(?i)(child_process|exec).*env.*TOKEN",
+      "(?i)(child_process|exec).*env.*SECRET",
+      "(?i)process\\.env\\.GITHUB_TOKEN",
+      "(?i)process\\.env\\.CI.*TOKEN",
+      "(?i)process\\.env\\.AWS_"
+    ],
+    "npm_ci_leak_patterns": [
+      "(?i)process\\.env\\.GITHUB_TOKEN",
+      "(?i)process\\.env\\.GITLAB_TOKEN",
+      "(?i)process\\.env\\.CI_JOB_TOKEN",
+      "(?i)process\\.env\\.AWS_ACCESS_KEY_ID",
+      "(?i)process\\.env\\.AWS_SECRET_ACCESS_KEY"
+    ]
+  },
+
+  "obfuscation": {
+    "patterns": [
+      "(?i)echo\\s+[A-Za-z0-9+/]{30,}={0,2}\\s*\\|\\s*(base64\\s+-d|openssl\\s+enc\\s+-d)",
+      "(?i)\\$\\(.*base64\\s*(-d|--decode).*\\)",
+      "(?i)printf\\s+'(\\\\x[0-9a-fA-F]{2}){5,}'",
+      "(\\\\x[0-9a-fA-F]{2}){10,}",
+      "(?i)python3?\\s+-c\\s+['\"].*__import__",
+      "(?i)python3?\\s+-c\\s+['\"].*compile.*exec",
+      "(?i)perl\\s+-e\\s+['\"].*eval\\s*\\(",
+      "(?i)ruby\\s+-e\\s+['\"].*eval",
+      "(?i)node\\s+-e\\s+['\"].*eval",
+      "(?i)\\$\\{IFS\\}",
+      "(?i)Function\\s*\\(\\s*['\"].*['\"]\\s*\\)",
+      "(?i)IEX.*webclient|IEX.*downloadstring"
+    ]
+  },
+
+  "zero_width_chars": {
+    "_comment": "Invisible Unicode characters used to hide prompt injection (CVE-2025-54794)",
+    "codepoints": [
+      "\\u200B", "\\u200C", "\\u200D", "\\u200E", "\\u200F",
+      "\\u2060", "\\u2061", "\\u2062", "\\u2063", "\\u2064",
+      "\\uFEFF", "\\u202E", "\\u202D"
+    ]
+  },
+
+  "prompt_injection": {
+    "patterns": [
+      "(?i)ignore\\s+(all\\s+)?previous\\s+instructions?",
+      "(?i)disregard\\s+(all\\s+)?(the\\s+)?(above|previous|prior)\\s+(instructions|context|rules)",
+      "(?i)forget\\s+(everything|all|prior|previous|your\\s+instructions)",
+      "(?i)act\\s+as\\s+(root|admin|superuser|an?\\s+unrestricted|a\\s+malicious)",
+      "(?i)you\\s+are\\s+now\\s+in\\s+(developer|jailbreak|god|unrestricted|DAN)\\s+mode",
+      "(?i)do\\s+not\\s+(tell|show|mention|inform|alert|notify)\\s+the\\s+user",
+      "(?i)hide\\s+this\\s+(from\\s+the\\s+user|action|command|operation|output)",
+      "(?i)bypass\\s+(safety|security|guidelines|restrictions|filters|policies)",
+      "(?i)new\\s+(instructions|system\\s+prompt)\\s*:",
+      "(?i)</?system>",
+      "(?i)\\[INST\\].*ignore",
+      "(?i)\\[SYSTEM\\].*override",
+      "(?i)---+\\s*system\\s*---+",
+      "(?i)execute\\s+without\\s+(asking|confirming|telling|notifying)",
+      "(?i)reveal\\s+(the\\s+)?(system\\s+)?prompt",
+      "(?i)print\\s+(the\\s+)?(system\\s+)?prompt",
+      "(?i)from\\s+now\\s+on\\s+(you\\s+)?(will|must|should)",
+      "(?i)override\\s+(your\\s+)?(permissions|access|restrictions)"
+    ]
+  },
+
+  "tool_description_poisoning": {
+    "_comment": "Patterns in MCP tool descriptions used for tool poisoning attacks (Invariant Labs research)",
+    "patterns": [
+      "(?i)<IMPORTANT>",
+      "(?i)\\[HIDDEN\\s+INSTRUCTIONS?\\]",
+      "(?i)\\[INTERNAL\\s+ONLY\\]",
+      "(?i)(READ|FETCH|EXFILTRATE).*(?:secret|credential|key|token).*then.*(send|post|upload)",
+      "(?i)(send|post|upload).*to.*(webhook|discord|pastebin|transfer\\.sh)"
+    ]
+  },
+
+  "allowlist": {
+    "paths": ["/tmp/", "/var/tmp/"],
+    "domains": [
+      "api.anthropic.com",
+      "api.github.com", "github.com", "raw.githubusercontent.com",
+      "registry.npmjs.org", "npmjs.com",
+      "pypi.org", "files.pythonhosted.org",
+      "hub.docker.com", "registry-1.docker.io",
+      "dl.google.com", "storage.googleapis.com",
+      "marketplace.visualstudio.com"
+    ]
+  }
+}
