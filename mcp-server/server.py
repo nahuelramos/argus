@@ -289,6 +289,109 @@ def _check_mcpscan(server_name: str) -> list[str]:
     return findings
 
 
+def _check_github_advisory(server_name: str, server_command: str) -> list[str]:
+    """
+    Query GitHub Advisory Database for known vulnerabilities.
+    Tries to detect the npm package name from the server command, falls back
+    to querying by server name directly.
+    """
+    findings = []
+
+    # Extract likely npm package name from command
+    # e.g. "npx @playwright/mcp@latest" → "@playwright/mcp"
+    # e.g. "uvx awslabs.aws-docs-mcp-server@latest" → "awslabs.aws-docs-mcp-server"
+    package = None
+    cmd_parts = server_command.split()
+    for part in cmd_parts:
+        p = part.split("@")[0] if "@" in part and not part.startswith("@") else part
+        if p and p not in ("npx", "uvx", "python3", "python", "node") and not p.startswith("-"):
+            package = p
+            break
+
+    names_to_try = list(dict.fromkeys(filter(None, [
+        package,
+        server_name,
+        server_name.split("/")[-1].split("@")[0],
+    ])))
+
+    found_any = False
+    for q in names_to_try:
+        # Guess ecosystem from command
+        eco = "npm" if any(k in server_command for k in ("npx", "node_modules")) else \
+              "pip" if any(k in server_command for k in ("uvx", "pip", "python")) else "npm"
+        url = (f"https://api.github.com/advisories"
+               f"?per_page=5&ecosystem={eco}&package={urllib.parse.quote(q)}")
+        data = _http_get(url)
+        if data and isinstance(data, list) and data:
+            for adv in data[:3]:
+                ghsa  = adv.get("ghsa_id", "?")
+                sev   = (adv.get("severity") or "unknown").upper()
+                summ  = (adv.get("summary") or "")[:120]
+                findings.append(f"[GHSA] {ghsa} [{sev}]: {summ}")
+            found_any = True
+            break
+        elif data is not None:
+            found_any = True  # API responded, just no results
+            break
+
+    if not found_any:
+        findings.append("[GHSA] API unavailable — skipped")
+    elif not findings:
+        findings.append("[GHSA] No advisories found")
+
+    return findings
+
+
+def _check_github_issues(server_name: str, server_command: str) -> list[str]:
+    """
+    Search GitHub Issues for security reports about this MCP server.
+    Uses the GitHub Search API (unauthenticated, rate-limited to 10 req/min).
+    """
+    findings = []
+
+    # Build a search term: prefer package name, fallback to server name
+    package = server_name.split("/")[-1].split("@")[0]
+    queries = [
+        f"{package} MCP security vulnerability",
+        f"{package} MCP malicious backdoor",
+    ]
+
+    all_issues = []
+    for q in queries:
+        url = (f"https://api.github.com/search/issues"
+               f"?q={urllib.parse.quote(q)}+type:issue&per_page=5&sort=updated")
+        data = _http_get(url)
+        if data and isinstance(data, dict):
+            items = data.get("items") or []
+            all_issues.extend(items)
+        if all_issues:
+            break  # one successful query is enough
+
+    if not all_issues and data is None:
+        findings.append("[GitHub Issues] API unavailable — skipped")
+        return findings
+
+    # Filter for security-relevant issues
+    security_kws = {
+        "malicious", "backdoor", "credential", "exploit", "vulnerability",
+        "attack", "stolen", "exfiltrat", "hijack", "supply chain", "poison",
+    }
+    hits = []
+    for issue in all_issues[:10]:
+        title = (issue.get("title") or "").lower()
+        body  = (issue.get("body") or "").lower()[:300]
+        text  = title + " " + body
+        if any(kw in text for kw in security_kws):
+            repo  = issue.get("repository_url", "").replace("https://api.github.com/repos/", "")
+            state = issue.get("state", "?")
+            hits.append(f"[GitHub Issues] [{state.upper()}] {issue.get('title','?')[:100]}  ({repo})")
+
+    if hits:
+        findings.extend(hits[:3])
+    else:
+        findings.append(f"[GitHub Issues] No security-related issues found for '{package}'")
+
+
 def _analyze_descriptions(tools: list[dict]) -> list[dict]:
     """
     Static analysis of MCP tool descriptions.
@@ -521,9 +624,10 @@ async def list_tools() -> list[types.Tool]:
             name="argus_scan_mcp",
             description=(
                 "Scan an MCP server for security risks. "
-                "Queries VulnerableMCP.info and MCPScan.ai for known issues, "
-                "and performs static analysis on tool descriptions for prompt injection, "
-                "zero-width char hiding, and coherence mismatches. "
+                "Queries 4 threat intelligence sources: GitHub Advisory Database, "
+                "VulnerableMCP.info, MCPScan.ai, and GitHub Issues. "
+                "Also performs static analysis on tool descriptions for prompt injection, "
+                "zero-width char hiding, coherence mismatches, and source integrity. "
                 "Call this for every MCP server before trusting its tools."
             ),
             inputSchema={
@@ -750,20 +854,32 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
         lines = [f"🔍 Argus MCP Scan: {server_name}", "─" * 50]
 
-        # 1. VulnerableMCP.info
-        lines.append("\n[1] VulnerableMCP.info")
+        # 1. GitHub Advisory Database
+        lines.append("\n[1] GitHub Advisory Database (GHSA)")
+        ghsa_hits = _check_github_advisory(server_name, server_command)
+        for h in ghsa_hits:
+            lines.append(f"  {h}")
+
+        # 2. VulnerableMCP.info
+        lines.append("\n[2] VulnerableMCP.info")
         vuln_hits = _check_vulnerablemcp(server_name)
         for h in vuln_hits:
             lines.append(f"  {h}")
 
-        # 2. MCPScan.ai
-        lines.append("\n[2] MCPScan.ai")
+        # 3. MCPScan.ai
+        lines.append("\n[3] MCPScan.ai")
         scan_hits = _check_mcpscan(server_name)
         for h in scan_hits:
             lines.append(f"  {h}")
 
-        # 3. Source integrity (GitHub-based packages)
-        lines.append("\n[3] Source Integrity")
+        # 4. GitHub Issues (security reports from the community)
+        lines.append("\n[4] GitHub Issues (security reports)")
+        issues_hits = _check_github_issues(server_name, server_command)
+        for h in issues_hits:
+            lines.append(f"  {h}")
+
+        # 5. Source integrity (GitHub-based packages)
+        lines.append("\n[5] Source Integrity")
         cmd_lower = server_command.lower()
         if "npx" in cmd_lower or "uvx" in cmd_lower:
             # Extract package name from command
@@ -795,8 +911,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         else:
             lines.append("  (no source integrity check for this command type)")
 
-        # 4. Static description analysis
-        lines.append("\n[4] Tool Description Analysis")
+        # 6. Static description analysis
+        lines.append("\n[6] Tool Description Analysis")
         if tools:
             desc_findings = _analyze_descriptions(tools)
             if desc_findings:
@@ -811,8 +927,12 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         # Summary verdict
         all_findings = [f for f in (desc_findings if tools else [])
                         if f["severity"] in ("critical", "high")]
+        all_remote_hits = ghsa_hits + vuln_hits + scan_hits + issues_hits
         is_suspicious = (
-            any("known-malicious" in h for h in vuln_hits + scan_hits)
+            any("known-malicious" in h or "[GHSA]" in h and "No advisories" not in h
+                and "unavailable" not in h and "[OPEN]" in h
+                for h in all_remote_hits)
+            or any("[VulnerableMCP/local]" in h for h in all_remote_hits)
             or bool(all_findings)
         )
         if is_suspicious:

@@ -409,6 +409,65 @@ High-entropy strings (Shannon entropy ≥ 4.5)
 
 ---
 
+## Threat intelligence sources
+
+Argus queries different sources depending on the component. Here's exactly what
+each one checks — no marketing, just facts.
+
+### `argus_scan_mcp` (MCP tool — programmatic HTTP, no WebSearch)
+
+| Source | What's checked | Status |
+|---|---|---|
+| GitHub Advisory Database | Known CVEs/GHSAs for the package | ✅ Live API |
+| VulnerableMCP.info | MCP-specific incident database | ✅ Live API (+ local fallback) |
+| MCPScan.ai | Risk score and known issues | ✅ Live API (graceful fallback) |
+| GitHub Issues | Community-reported security incidents | ✅ GitHub Search API |
+| npm / PyPI registry | Deprecation, version, source repo | ✅ Live API |
+| Source integrity | SHA-256 of local scripts, repo URL check | ✅ Local |
+| Tool description analysis | Injection, zero-width chars, coherence | ✅ Local static |
+| Snyk | — | ❌ Not in this tool |
+| ToxicSkills Research | No public API available | ❌ N/A |
+| ClawHub / OpenClaw | No public API available | ❌ N/A |
+| OWASP (live query) | No queryable registry for MCP | ❌ N/A |
+| OWASP patterns | Injection / API Security Top 10 patterns in IOC DB | ✅ via IOC |
+| Anthropic Discord | No public API | ❌ N/A |
+
+### `argus_scan_package` (MCP tool — programmatic HTTP)
+
+| Source | What's checked | Status |
+|---|---|---|
+| GitHub Advisory Database | CVEs/GHSAs per package + ecosystem | ✅ Live API |
+| Google OSV | Open Source Vulnerabilities | ✅ Live API |
+| npm registry | Deprecated, version metadata | ✅ Live API |
+| PyPI | Yanked versions, vulnerabilities | ✅ Live API |
+
+### SKILL.md scanner (Claude-based — uses WebSearch + WebFetch)
+
+| Source | What's checked | Status |
+|---|---|---|
+| GitHub Advisory Database | CVEs/GHSAs | ✅ HTTP |
+| Google OSV | Open Source Vulnerabilities | ✅ HTTP |
+| NIST NVD | CVE database (CVSS scores) | ✅ HTTP |
+| npm / PyPI registries | Version, deprecation | ✅ HTTP |
+| VulnerableMCP.info | MCP incident database | ✅ WebFetch |
+| Snyk | Vulnerability count per package | ✅ WebFetch |
+| Reddit r/mcp + r/ClaudeAI | Community security reports | ✅ WebSearch |
+| Local static analysis | IOC patterns, entropy, injection | ✅ Local |
+| MCPScan.ai | — | ❌ Not in SKILL.md |
+| ClawHub / OpenClaw | No public API | ❌ N/A |
+| ToxicSkills Research | No public API | ❌ N/A |
+| Anthropic Discord | No public API | ❌ N/A |
+| GitHub Issues | Covered via WebSearch | ✅ Indirect |
+
+### Runtime hooks (preflight.py — always on, no network)
+
+The hooks never make network requests. All detection is local:
+- IOC regex database (12 check types)
+- LLM second opinion via `claude -p` (active session, no API key)
+- MCP unknown server detection (file-based state)
+
+---
+
 ## MCP server — security tools (Claude Desktop)
 
 The Argus MCP server exposes **7 tools** Claude can call proactively or on demand.
@@ -418,17 +477,17 @@ The Argus MCP server exposes **7 tools** Claude can call proactively or on deman
 | Tool | When to call it |
 |---|---|
 | `argus_check` | Before any shell command, file access, or network request |
-| `argus_scan_package` | Before `npm install` or `pip install` |
+| `argus_scan_package` | Before `npm install` or `pip install` — queries GHSA + OSV + registries |
 | `argus_scan_file` | Static IOC analysis on a local file |
 | `argus_audit_log` | View recent security events |
 
-### MCP scanning tools (new)
+### MCP scanning tools
 
 | Tool | What it does |
 |---|---|
-| `argus_scan_mcp` | Full audit of an MCP server: queries VulnerableMCP.info + MCPScan.ai, analyzes tool descriptions for injection/coherence issues, checks npm/script source integrity. Marks clean servers as trusted — preflight.py stops warning about them. |
-| `argus_mcp_snapshot` | Saves a SHA-256 baseline of all tool descriptions for a server. Run once after verifying. |
-| `argus_mcp_diff` | Compares current tool descriptions against the saved baseline. Detects supply chain modifications between updates. |
+| `argus_scan_mcp` | Full audit: GHSA + VulnerableMCP.info + MCPScan.ai + GitHub Issues + source integrity + static description analysis. Marks clean servers trusted — auto-warning stops. |
+| `argus_mcp_snapshot` | Saves SHA-256 baseline of all tool descriptions. Run once after verifying. |
+| `argus_mcp_diff` | Compares current descriptions vs baseline — detects supply chain modifications. |
 
 ---
 
