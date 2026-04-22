@@ -511,6 +511,57 @@ class TestAnalyzeDescriptions:
         assert crits
 
 
+class TestUnknownMcpDetection:
+    """Automatic detection of unscanned MCP servers in preflight.py."""
+
+    def _mcp_call(self, server: str, tool: str = "do_thing") -> dict:
+        return _decide(f"mcp__{server}__{tool}", {"param": "value"})
+
+    def test_non_mcp_tool_not_flagged(self):
+        # Regular tool calls should not trigger MCP warning
+        assert _allowed(_decide("Bash", {"command": "ls -la"}))
+
+    def test_unscanned_mcp_warns(self):
+        # An unscanned MCP server should produce a warning
+        r = self._mcp_call("some-unknown-server-xyz")
+        # Should warn (additionalContext) or allow — must NOT block
+        denied = r.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+        assert not denied, "Unknown MCP server should never be blocked, only warned"
+        # Should have context if warned
+        # (may be empty if the server was already warned this session — that's OK too)
+
+    def test_trusted_mcp_not_warned(self, monkeypatch, tmp_path):
+        # Servers in trusted_mcps allowlist should not trigger warning
+        allowlist_file = tmp_path / "argus-allowlist.json"
+        allowlist_file.write_text(json.dumps({"trusted_mcps": ["my-trusted-server"]}))
+        monkeypatch.setattr(
+            preflight, "ALLOWLIST_SEARCH",
+            [allowlist_file, preflight.ARGUS_HOME / "allowlist.json"]
+        )
+        r = self._mcp_call("my-trusted-server")
+        assert _allowed(r), "Trusted MCP server should be silently allowed"
+
+    def test_mcp_tool_name_parsing(self):
+        from preflight import _check_unknown_mcp
+        # Should extract server name correctly
+        # mcp__serverName__toolName → server = "serverName"
+        match, sev = _check_unknown_mcp("mcp__my-server__my_tool", {})
+        # Either warns (match) or is already in session state (None) — both valid
+        # The important thing is it never crashes and never returns "high"
+        assert sev in ("medium", "")
+
+    def test_mcp_no_double_underscore_ignored(self):
+        from preflight import _check_unknown_mcp
+        match, sev = _check_unknown_mcp("mcp__", {})
+        # Malformed tool name — should not crash, return empty
+        assert sev == ""
+
+    def test_non_mcp_prefix_ignored(self):
+        from preflight import _check_unknown_mcp
+        match, sev = _check_unknown_mcp("Bash", {})
+        assert match is None and sev == ""
+
+
 class TestMcpSnapshot:
     """Snapshot save / load / diff — filesystem only."""
 

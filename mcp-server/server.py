@@ -350,6 +350,28 @@ def _analyze_descriptions(tools: list[dict]) -> list[dict]:
     return findings
 
 
+MCP_SCANNED = Path.home() / ".argus" / "mcp-scanned.json"
+
+
+def _mark_scanned_clean(server_name: str):
+    """Record this server as confirmed clean so preflight.py stops warning about it."""
+    try:
+        MCP_SCANNED.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = {}
+        if MCP_SCANNED.exists():
+            try:
+                data = json.loads(MCP_SCANNED.read_text())
+            except Exception:
+                pass
+        confirmed = set(data.get("confirmed_clean", []))
+        confirmed.add(server_name)
+        data["confirmed_clean"] = sorted(confirmed)
+        data["last_updated"] = datetime.now(timezone.utc).isoformat()
+        MCP_SCANNED.write_text(json.dumps(data, indent=2))
+    except Exception:
+        pass
+
+
 def _snapshot_path(server_name: str) -> Path:
     safe = re.sub(r"[^a-zA-Z0-9_\-.]", "_", server_name)
     return MCP_SNAPSHOTS / f"{safe}.json"
@@ -789,11 +811,19 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         # Summary verdict
         all_findings = [f for f in (desc_findings if tools else [])
                         if f["severity"] in ("critical", "high")]
-        if any("known-malicious" in h or "VulnerableMCP.info]" in h and "unavailable" not in h
-               for h in vuln_hits + scan_hits) or all_findings:
+        is_suspicious = (
+            any("known-malicious" in h for h in vuln_hits + scan_hits)
+            or bool(all_findings)
+        )
+        if is_suspicious:
             lines.append("\n🚫 VERDICT: SUSPICIOUS — review before using this server")
         else:
-            lines.append("\n✅ VERDICT: No known issues detected")
+            lines.append(
+                "\n✅ VERDICT: No known issues detected\n"
+                f"   Server '{server_name}' marked as confirmed-clean — "
+                "argus will no longer warn when its tools are called."
+            )
+            _mark_scanned_clean(server_name)
 
         return [types.TextContent(type="text", text="\n".join(lines))]
 

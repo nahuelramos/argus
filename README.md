@@ -1,14 +1,15 @@
 # Argus
 
 Security system for Claude — blocks credential theft, reverse shells, data
-exfiltration, and prompt injection across Claude Code, Claude Desktop, and Claude Web.
+exfiltration, prompt injection, and MCP tool poisoning across Claude Code,
+Claude Desktop, and Claude Web.
 
 ---
 
 ## Quick install
 
 ```bash
-npx argus-security
+npx github:nahuelramos/argus --all
 ```
 
 Interactive installer — detects your environment and sets up whichever Claude
@@ -16,22 +17,16 @@ platforms you use.
 
 ```
   [1] Claude Code CLI    — enforced blocking via hooks
-  [2] Claude Desktop     — MCP server with 4 security tools
+  [2] Claude Desktop     — MCP server with security tools
   [3] Claude Web         — copy security policy to clipboard
   [4] All of the above
 ```
 
 Other commands:
 ```bash
-npx argus-security --all       # install everything, no prompts
-npx argus-security status      # check what's installed + audit stats
-npx argus-security uninstall   # remove everything cleanly
+npx github:nahuelramos/argus status      # check what's installed + audit stats
+npx github:nahuelramos/argus uninstall   # remove everything cleanly
 ```
-
-> **From GitHub before npm publish:**
-> ```bash
-> npx github:nahuelramos/argus
-> ```
 
 ---
 
@@ -58,18 +53,21 @@ Claude Code calls them automatically — no action needed per session.
 You ask Claude something
         │
         ▼
-  Claude decides to run a tool (Bash, Read, Write…)
+  Claude decides to run a tool (Bash, Read, Write, mcp__server__tool…)
         │
         ▼
-┌─────────────────────────────────┐
-│  preflight.py  (PreToolUse)     │  ← runs BEFORE the tool
-│                                 │
-│  Stage 0: trusted integration?  │  ← your AWS/GitHub/etc config
-│  Stage 1: regex / IOC checks    │  ← 11 checks, ~1ms, free
-│  Stage 2: Claude Haiku (LLM)    │  ← ambiguous cases only, ~300ms
-│                                 │
-│  Returns: allow / block / warn  │
-└─────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  preflight.py  (PreToolUse)           runs BEFORE the tool  │
+│                                                             │
+│  Stage 0: trusted integration?      ← your AWS/GitHub/etc   │
+│  Stage 1: regex / IOC matching      ← 12 checks, ~1ms       │
+│  Stage 1b: MCP server detection     ← NEW: auto-warn on     │
+│            (mcp__*__ calls)           unscanned servers      │
+│  Stage 2: Claude Haiku (LLM)        ← always runs for       │
+│            second opinion             Bash/Write/Edit        │
+│                                                             │
+│  Returns: allow / block / warn                              │
+└─────────────────────────────────────────────────────────────┘
         │
    ┌────┴─────┐
    │          │
@@ -79,24 +77,23 @@ You ask Claude something
    │                                                            │
    │                                            ┌──────────────▼──────────────┐
    │                                            │  postcheck.py (PostToolUse) │
-   │                                            │  Scans tool OUTPUT for      │
-   │                                            │  secrets and sensitive data  │
+   │                                            │  DLP scan on tool OUTPUT    │
+   │                                            │  for secrets / credentials  │
    │                                            └─────────────────────────────┘
    │
    └── Claude sees the block reason and explains it to you
         │
         ▼
-┌─────────────────────────────────┐
-│  session-report.py  (Stop)      │  ← runs after EVERY response
-│  If any events occurred:        │
-│  prints a security summary      │
-└─────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  session-report.py  (Stop)                                  │
+│  If any events occurred in this response turn:              │
+│  prints a security summary to your terminal                 │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Runtime:** hooks are 100% local, ~30-80ms per tool call, zero LLM cost.
-Stage 2 LLM analysis (~300ms) only activates on ambiguous cases when
-`ANTHROPIC_API_KEY` is set. The scanner skill makes outbound requests to
-threat intel APIs on demand only.
+**Runtime:** hooks are 100% local, ~30–80ms per tool call, zero LLM cost during
+normal operation. Stage 2 LLM analysis (~300ms) runs for Bash/Write/Edit calls
+using your active Claude Code session — no API key needed.
 
 ---
 
@@ -108,38 +105,47 @@ Argus recognizes those operations as trusted and skips all further checks.
 `aws s3 ls` with AWS configured → allow immediately.
 
 ### Stage 1 — Regex / IOC matching (~1ms)
-11 pattern checks against the IOC database. If severity is `critical` or
+12 pattern checks against the IOC database. If severity is `critical` or
 the match is unambiguous → block immediately without calling the LLM.
 
-### Stage 2 — Claude Haiku analysis (~300ms, optional)
-Only triggers for ambiguous cases: medium severity, prompt injection,
-obfuscation, or zero-width character detections. Claude Haiku receives the
-tool call plus your integration context and decides: false positive or real threat?
-Requires `ANTHROPIC_API_KEY` in environment. Silently skipped if not set.
+**Stage 1b — MCP automatic detection (new)**
+When Claude calls any `mcp__serverName__toolName` tool, Argus checks whether
+that server has been audited yet. If not, it emits an `additionalContext` warning
+asking you to run `/scan-mcps`. Once you scan and clear a server, Argus records
+it as confirmed-clean and stops warning. This happens automatically — zero config.
+
+### Stage 2 — Claude Haiku analysis (~300ms)
+Always runs for Bash, Write, Edit, and NotebookEdit calls. Acts as a second
+opinion on top of regex: can downgrade false positives (regex matched but
+action is safe) or catch novel attacks that patterns didn't detect.
+Uses `claude -p` — requires an active Claude Code session. Silently skipped
+when `ARGUS_NO_LLM=1` is set (CI/tests).
 
 ---
 
 ## Components
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  COMPONENT 1 — Runtime Hooks  (always on, Claude Code CLI)   │
-│  preflight.py + postcheck.py + session-report.py             │
-│  Blocks dangerous calls in real time. ~50ms. Zero LLM.       │
-├──────────────────────────────────────────────────────────────┤
-│  COMPONENT 2 — Scanner Skill  (on demand, all platforms)     │
-│  SKILL.md + scripts/local-scan.py                            │
-│  Deep scan against 8 threat intel sources when you ask.      │
-│  Uses Claude + web search. Run before installing anything.   │
-├──────────────────────────────────────────────────────────────┤
-│  COMPONENT 3 — MCP Server  (Claude Desktop)                  │
-│  mcp-server/server.py                                        │
-│  4 security tools Claude can call before risky actions.      │
-├──────────────────────────────────────────────────────────────┤
-│  COMPONENT 4 — Web Instructions  (Claude Web)                │
-│  WEB_INSTRUCTIONS.md                                         │
-│  Security policy to paste into Project Instructions.         │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  COMPONENT 1 — Runtime Hooks  (always on, Claude Code CLI)           │
+│  preflight.py + postcheck.py + session-report.py                     │
+│  Blocks dangerous calls in real time. ~50ms. Zero LLM.               │
+│  Includes automatic MCP server detection (Stage 1b).                 │
+├──────────────────────────────────────────────────────────────────────┤
+│  COMPONENT 2 — MCP Security Server  (Claude Desktop + Code CLI)      │
+│  mcp-server/server.py                                                │
+│  7 security tools Claude can call proactively or on demand.          │
+│  Includes MCP scanning, snapshot/diff for supply chain detection.    │
+├──────────────────────────────────────────────────────────────────────┤
+│  COMPONENT 3 — Skills  (Claude Code CLI)                             │
+│  ~/.claude/commands/scan-mcps.md  — /scan-mcps                       │
+│  ~/.claude/commands/test-argus.md — /test-argus                      │
+│  SKILL.md — general scanner skill (all platforms)                    │
+├──────────────────────────────────────────────────────────────────────┤
+│  COMPONENT 4 — Web Instructions  (Claude Web)                        │
+│  WEB_INSTRUCTIONS.md                                                 │
+│  Security policy to paste into Project Instructions.                 │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -151,14 +157,15 @@ argus/
 ├── bin/
 │   └── argus.js                 ← npx installer (interactive)
 ├── hooks/                       ← Claude Code CLI
-│   ├── preflight.py             ← PreToolUse: blocks BEFORE execution
-│   ├── postcheck.py             ← PostToolUse: DLP scan on outputs
+│   ├── preflight.py             ← PreToolUse: 3-stage pipeline + MCP detection
+│   ├── postcheck.py             ← PostToolUse: DLP scan on tool outputs
 │   ├── session-report.py        ← Stop: security summary after each response
 │   ├── llm_analysis.py          ← Stage 2: Claude Haiku second opinion
 │   ├── install.sh               ← manual install (alternative to npx)
 │   └── uninstall.sh
-├── mcp-server/                  ← Claude Desktop
-│   ├── server.py                ← MCP server with 4 security tools
+├── mcp-server/                  ← Claude Desktop + Code CLI
+│   ├── server.py                ← MCP server with 7 security tools
+│   ├── test-server.py           ← poisoned MCP server for /test-argus
 │   └── install-desktop.sh       ← manual install for Desktop
 ├── scripts/
 │   └── local-scan.py            ← static file analyzer (shared)
@@ -166,10 +173,10 @@ argus/
 │   ├── iocs.json                ← Indicators of Compromise database
 │   └── allowlist.json           ← integrations + custom exceptions
 ├── tests/
-│   └── test_hooks.py            ← 120 regression tests
-├── SKILL.md                     ← scanner skill (Claude Code + Desktop)
+│   └── test_hooks.py            ← 143 regression tests
+├── SKILL.md                     ← scanner skill (all platforms)
 ├── WEB_INSTRUCTIONS.md          ← Claude Web: paste into Project Instructions
-├── package.json                 ← npm package definition
+├── package.json
 ├── argus-report.py              ← CLI audit log viewer
 └── README.md
 ```
@@ -181,16 +188,16 @@ argus/
 ### Recommended — npx (all platforms)
 
 ```bash
-npx argus-security
+npx github:nahuelramos/argus --all
 ```
 
-Requires: Node.js 16+, Python 3.8+, jq
+Requires: Node.js 16+, Python 3.8+
 
 The installer:
 1. Detects your OS and which Claude apps are installed
 2. Asks which platforms to set up
 3. Copies Python files to `~/.argus/lib/`
-4. Registers hooks / MCP server / skill automatically
+4. Registers hooks / MCP server / skills automatically
 5. Copies Web instructions to clipboard (if selected)
 
 ---
@@ -200,7 +207,7 @@ The installer:
 #### macOS
 
 ```bash
-brew install python3 jq git
+brew install python3 git
 git clone https://github.com/nahuelramos/argus.git ~/argus
 cd ~/argus && bash hooks/install.sh --user
 ```
@@ -208,7 +215,7 @@ cd ~/argus && bash hooks/install.sh --user
 #### Linux
 
 ```bash
-sudo apt install -y python3 python3-pip jq git   # Ubuntu/Debian
+sudo apt install -y python3 python3-pip git
 git clone https://github.com/nahuelramos/argus.git ~/argus
 cd ~/argus && bash hooks/install.sh --user
 ```
@@ -234,7 +241,7 @@ Update `%APPDATA%\Claude\settings.json` to use WSL paths:
 ```
 
 **Option B — Git Bash**
-- Install [Git for Windows](https://git-scm.com/download/win), [Python 3](https://python.org/downloads/windows/), [jq](https://jqlang.org/download/)
+- Install [Git for Windows](https://git-scm.com/download/win) and [Python 3](https://python.org/downloads/windows/)
 ```bash
 git clone https://github.com/nahuelramos/argus.git ~/argus
 cd ~/argus && bash hooks/install.sh --user
@@ -244,7 +251,7 @@ cd ~/argus && bash hooks/install.sh --user
 
 ```bash
 cat ~/.claude/settings.json | python3 -m json.tool | grep -A5 PreToolUse
-cd ~/argus && python3 -m pytest tests/ -v   # Expected: 120 passed
+cd ~/argus && python3 -m pytest tests/ -v   # Expected: 143 passed (4 pre-existing skipped)
 ```
 
 #### Uninstall
@@ -258,7 +265,7 @@ bash ~/argus/hooks/uninstall.sh --user
 ### Manual install — Claude Desktop
 
 ```bash
-# macOS / Linux / Windows (Git Bash)
+pip3 install mcp
 bash ~/argus/mcp-server/install-desktop.sh
 ```
 
@@ -267,30 +274,20 @@ Config locations:
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 - Linux: `~/.config/Claude/claude_desktop_config.json`
 
-Restart Claude Desktop after installing. Claude will have these tools:
-
-| Tool | When to call it |
-|---|---|
-| `argus_check` | Before any shell command, file access, or network request |
-| `argus_scan_package` | Before `npm install` or `pip install` |
-| `argus_scan_file` | Static IOC analysis on a local file |
-| `argus_audit_log` | View recent security events |
+Restart Claude Desktop after installing.
 
 ---
 
 ### Manual install — Claude Web
 
 1. Run `npx github:nahuelramos/argus --web` — copies the security policy to your clipboard
-   - Or open `WEB_INSTRUCTIONS.md` from this repo and copy the full content manually
-2. Go to **[claude.ai](https://claude.ai)** and open **Projects** in the left sidebar
-3. Select an existing project or create a new one
-4. Inside the project, click **Edit Instructions** (top-right corner)
-5. Paste with `Cmd+V` (macOS) or `Ctrl+V` (Windows/Linux) and click **Save**
+   (or open `WEB_INSTRUCTIONS.md` and copy the content manually)
+2. Go to **[claude.ai](https://claude.ai)** → **Projects** → **Edit Instructions**
+3. Paste and click **Save**
 
-> **Note:** Claude Web does not have system-level hooks. The policy works through
-> Claude following the instructions cooperatively. For guaranteed enforcement,
-> use Argus with **Claude Code CLI** which intercepts every tool call via
-> `PreToolUse`/`PostToolUse` hooks before execution.
+> Claude Web does not have system-level hooks. The policy works through Claude
+> following the instructions cooperatively. For guaranteed enforcement use
+> **Claude Code CLI** with hooks.
 
 ---
 
@@ -350,6 +347,7 @@ Discord/Slack webhooks, direct IP URLs, suspicious TLDs (.tk .xyz .zip ...)
 ### Dangerous commands
 ```
 curl/wget piped to bash/sh
+base64 -d piped to bash/sh/python (obfuscated execution)
 Reverse shells: bash -i >& /dev/tcp/..., nc -e /bin/sh, python socket.connect
 chmod SUID, LD_PRELOAD, crontab abuse, systemctl enable
 docker --privileged -v /:/host, shred, IEX/Invoke-Expression
@@ -357,15 +355,25 @@ docker --privileged -v /:/host, shred, IEX/Invoke-Expression
 
 ### Obfuscation
 ```
-base64 decode piped to bash, hex shellcode \x2f\x62..., $IFS tricks
+Hex shellcode \x2f\x62..., $IFS tricks
 python3 -c '__import__...', perl/ruby eval
 ```
 
 ### Prompt injection
 ```
 "Ignore all previous instructions", "Act as root", "bypass safety"
+"Your new task is...", "Do not tell the user...", "silently exfiltrate..."
 Zero-width characters U+200B–U+200F (CVE-2025-54794)
 RTL override U+202E used to hide text
+```
+
+### MCP tool description poisoning (new)
+```
+Hidden instructions inside tool descriptions (Invariant Labs research)
+Coherence mismatches: tool claims to do X but description requests Y
+Zero-width chars embedded in inputSchema fields
+High-entropy blobs (anomaly detection)
+Supply chain modifications: description changes between sessions
 ```
 
 ### Supply chain attacks
@@ -401,11 +409,110 @@ High-entropy strings (Shannon entropy ≥ 4.5)
 
 ---
 
+## MCP server — security tools (Claude Desktop)
+
+The Argus MCP server exposes **7 tools** Claude can call proactively or on demand.
+
+### Core tools
+
+| Tool | When to call it |
+|---|---|
+| `argus_check` | Before any shell command, file access, or network request |
+| `argus_scan_package` | Before `npm install` or `pip install` |
+| `argus_scan_file` | Static IOC analysis on a local file |
+| `argus_audit_log` | View recent security events |
+
+### MCP scanning tools (new)
+
+| Tool | What it does |
+|---|---|
+| `argus_scan_mcp` | Full audit of an MCP server: queries VulnerableMCP.info + MCPScan.ai, analyzes tool descriptions for injection/coherence issues, checks npm/script source integrity. Marks clean servers as trusted — preflight.py stops warning about them. |
+| `argus_mcp_snapshot` | Saves a SHA-256 baseline of all tool descriptions for a server. Run once after verifying. |
+| `argus_mcp_diff` | Compares current tool descriptions against the saved baseline. Detects supply chain modifications between updates. |
+
+---
+
+## MCP automatic detection — how it works
+
+When Claude calls any MCP tool (`mcp__serverName__toolName`), the PreToolUse
+hook automatically checks if that server has been audited:
+
+```
+Claude calls mcp__playwright__browser_navigate
+        │
+        ▼
+  preflight.py: is "playwright" in confirmed-clean list?
+        │
+    YES → allow silently
+        │
+    NO  → ⚠️  additionalContext warning:
+              "playwright has not been scanned.
+               Run /scan-mcps to verify its tool descriptions."
+        │
+        ▼
+  User runs /scan-mcps
+  argus_scan_mcp called → CLEAN
+        │
+        ▼
+  ~/.argus/mcp-scanned.json updated:
+    confirmed_clean: ["playwright"]
+        │
+        ▼
+  Future calls to mcp__playwright__* → allow silently
+```
+
+The warning is `additionalContext` (never a block) — Claude proceeds, but
+you're informed. Warning deduplicates per server for 24h so it doesn't spam.
+
+To permanently trust a server without scanning:
+```json
+// ~/.argus/allowlist.json
+{
+  "trusted_mcps": ["playwright", "aws-docs"]
+}
+```
+
+---
+
+## Skills — /scan-mcps and /test-argus
+
+### /scan-mcps
+
+Run a full security audit of all registered MCP servers:
+
+```
+/scan-mcps
+```
+
+Claude will:
+1. Inventory all connected MCP servers
+2. Call `argus_scan_mcp` for each (VulnerableMCP.info + MCPScan.ai + static analysis)
+3. Diff current tool descriptions against saved baselines
+4. Print a summary table: Server | Tools | VulnerableMCP | Injection | Diff | Verdict
+5. Save baselines for clean servers (silences future preflight.py warnings)
+
+### /test-argus
+
+Run the full Argus test suite against live hooks:
+
+```
+/test-argus
+```
+
+Tests 6 attack vectors and reports BLOCKED / ALLOWED + reason for each:
+- Vector 1: Sensitive paths (AWS credentials, SSH keys)
+- Vector 2: Environment variable exfiltration
+- Vector 3: Network exfiltration (webhook.site)
+- Vector 4: Base64 obfuscation bypass (`echo ... | base64 -d | bash`)
+- Vector 5: Dangerous write (`/etc/passwd`)
+- Vector 6: MCP tool poisoning (`poisoned_tool` on the test server)
+
+---
+
 ## Security reports
 
 ### 1. Inline block message
 
-When Claude tries something blocked, it explains it to you:
 ```
 🚫 ARGUS — Action blocked [HIGH]
 
@@ -416,12 +523,21 @@ Reason:   AWS credentials — leaking these gives full cloud account access
 
 False positive? Add to ~/.argus/allowlist.json:
   {"paths": ["~/.aws/credentials"]}
+Audit log: ~/.argus/logs/audit.jsonl
 ```
 
-### 2. Session report (after each response)
+### 2. MCP warning (additionalContext)
 
-If any security events occurred during Claude's response, a summary prints
-automatically in the terminal:
+```
+⚠️  ARGUS — Unscanned MCP server
+Server: some-server
+This server's tool descriptions have not been verified for prompt injection.
+Run /scan-mcps to audit all registered MCP servers before continuing.
+To silence this: add the server to trusted_mcps in ~/.argus/allowlist.json
+```
+
+### 3. Session report (after each response)
+
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   🛡  ARGUS SECURITY REPORT — this response turn
@@ -434,7 +550,7 @@ automatically in the terminal:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-### 3. Audit log viewer
+### 4. Audit log viewer
 
 ```bash
 python3 ~/argus/argus-report.py            # last 50 entries
@@ -447,9 +563,8 @@ python3 ~/argus/argus-report.py --stats    # statistics summary
 
 ## Allowlist — exceptions and integrations
 
-Argus ships with templates for 12 common integrations. Edit
-`~/.argus/allowlist.json` (global) or `.security/argus-allowlist.json`
-(per project) to enable them.
+Edit `~/.argus/allowlist.json` (global) or `.security/argus-allowlist.json`
+(per project) to configure trusted integrations and exceptions.
 
 ### Enable a trusted integration
 
@@ -461,24 +576,19 @@ Argus ships with templates for 12 common integrations. Edit
       "allowed_patterns": ["aws s3 ls", "aws ec2 describe", "aws sts"],
       "blocked_patterns": ["aws iam create-user"],
       "allowed_domains": ["s3.amazonaws.com", "ec2.amazonaws.com"]
-    },
-    "google_calendar": {
-      "description": "Google Calendar API",
-      "allowed_domains": ["calendar.googleapis.com", "oauth2.googleapis.com"]
     }
   }
 }
 ```
 
-Pre-configured templates included: `aws`, `google_calendar`, `google_drive`,
-`github`, `slack`, `notion`, `linear`, `jira`, `postgres`, `docker`,
-`vercel`, `stripe`.
+Pre-configured templates: `aws`, `google_calendar`, `google_drive`, `github`,
+`slack`, `notion`, `linear`, `jira`, `postgres`, `docker`, `vercel`, `stripe`.
 
-### Add trusted MCPs
+### Trust an MCP server permanently
 
 ```json
 {
-  "trusted_mcps": ["aws-mcp-server", "google-calendar-mcp"]
+  "trusted_mcps": ["playwright", "aws-docs", "your-internal-mcp"]
 }
 ```
 
@@ -503,36 +613,28 @@ Edit `data/iocs.json` to add custom patterns without touching code:
 {
   "sensitive_paths": {
     "patterns": ["~/.your-app/secrets/"]
+  },
+  "dangerous_commands": {
+    "patterns": ["(?i)your-internal-ban-pattern"]
   }
 }
 ```
 
 ---
 
-## Scanner skill — threat intelligence on demand
+## State files
 
-Tell Claude in plain English:
+Argus writes to `~/.argus/`:
 
-```
-"scan my MCPs"
-"is @modelcontextprotocol/server-filesystem safe to install?"
-"audit all installed skills"
-```
-
-Claude checks each MCP/skill against 8 sources:
-
-| Source | API |
+| File | Purpose |
 |---|---|
-| GitHub Advisory DB (GHSA) | `api.github.com/advisories?ecosystem=npm&package=X` |
-| Google OSV Database | `POST api.osv.dev/v1/query` |
-| NIST NVD (CVE database) | `services.nvd.nist.gov/rest/json/cves/2.0` |
-| npm / PyPI registries | `registry.npmjs.org/X` · `pypi.org/pypi/X/json` |
-| vulnerablemcp.info | Web fetch + search |
-| Snyk | `security.snyk.io/package/npm/X` |
-| Reddit community | `reddit.com/r/mcp` + WebSearch |
-| Local static analysis | `scripts/local-scan.py` |
-
-Reports are saved to `.security/argus-scan-YYYY-MM-DD.md`.
+| `logs/audit.jsonl` | Every security event (allow/warn/block) |
+| `logs/.rate.json` | Rate limiter state (burst detection) |
+| `logs/.mcp-session.json` | MCP servers warned in the last 24h (dedup) |
+| `mcp-scanned.json` | MCP servers confirmed clean by `argus_scan_mcp` |
+| `mcp-snapshots/<name>.json` | Tool description baselines for diff detection |
+| `iocs.json` | Custom IOC overrides (merged with repo data/) |
+| `allowlist.json` | Trusted paths, domains, integrations, MCPs |
 
 ---
 
@@ -542,20 +644,11 @@ Reports are saved to `.security/argus-scan-YYYY-MM-DD.md`.
 |---|---|---|---|
 | Node.js 16+ | ✅ for npx install | ✅ for npx install | — |
 | Python 3.8+ | ✅ required | ✅ required | — |
-| jq | ✅ required | ✅ required | — |
 | `pip install mcp` | — | ✅ required (auto-installed) | — |
 | OS | macOS · Linux · Windows | macOS · Windows · Linux | any browser |
 
 ---
 
-## Publishing to npm
+## License
 
-```bash
-npm login
-npm publish
-```
-
-After publishing, users install with:
-```bash
-npx argus-security
-```
+MIT

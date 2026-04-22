@@ -53,8 +53,11 @@ ALLOWLIST_SEARCH = [
     Path.cwd() / ".security" / "argus-allowlist.json",
     Path.home() / ".argus" / "allowlist.json",
 ]
-AUDIT_LOG  = ARGUS_HOME / "logs" / "audit.jsonl"
-RATE_STATE = ARGUS_HOME / "logs" / ".rate.json"
+AUDIT_LOG    = ARGUS_HOME / "logs" / "audit.jsonl"
+RATE_STATE   = ARGUS_HOME / "logs" / ".rate.json"
+MCP_SCANNED  = ARGUS_HOME / "mcp-scanned.json"
+MCP_SESSION  = ARGUS_HOME / "logs" / ".mcp-session.json"
+MCP_WARN_TTL = 24 * 3600  # re-warn after 24h if server still not scanned
 
 RATE_WINDOW = 60
 RATE_BURST  = 5
@@ -285,6 +288,81 @@ def _check_tool_description_poisoning(strings: list, iocs: dict):
         if re.search(rx, blob):
             return rx, "high"
     return None, ""
+
+
+def _load_mcp_scanned() -> set:
+    """Return set of server names confirmed clean by argus_scan_mcp."""
+    try:
+        if MCP_SCANNED.exists():
+            return set(json.loads(MCP_SCANNED.read_text()).get("confirmed_clean", []))
+    except Exception:
+        pass
+    return set()
+
+
+def _mcp_warned_recently(server: str) -> bool:
+    """True if we warned about this server within MCP_WARN_TTL."""
+    try:
+        if MCP_SESSION.exists():
+            ts = json.loads(MCP_SESSION.read_text()).get(server)
+            if ts and (time.time() - ts) < MCP_WARN_TTL:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _record_mcp_warned(server: str):
+    try:
+        MCP_SESSION.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = {}
+        if MCP_SESSION.exists():
+            try:
+                data = json.loads(MCP_SESSION.read_text())
+            except Exception:
+                pass
+        now = time.time()
+        data = {k: v for k, v in data.items() if (now - v) < MCP_WARN_TTL}
+        data[server] = now
+        MCP_SESSION.write_text(json.dumps(data))
+    except Exception:
+        pass
+
+
+def _check_unknown_mcp(tool_name: str, allowlist: dict) -> tuple:
+    """
+    Detect first-time calls to MCP servers that haven't been scanned yet.
+    Returns (warning_message, "medium") so it surfaces as additionalContext.
+    Skips servers in the allowlist trusted_mcps list or already confirmed clean.
+    """
+    if not tool_name.startswith("mcp__"):
+        return None, ""
+
+    parts = tool_name.split("__")
+    if len(parts) < 2:
+        return None, ""
+
+    server = parts[1]
+    if not server:
+        return None, ""
+
+    # Allowlisted by user → trust it
+    if server in set(allowlist.get("trusted_mcps", [])):
+        return None, ""
+
+    # Explicitly scanned and confirmed clean → trust it
+    if server in _load_mcp_scanned():
+        return None, ""
+
+    # Already warned recently → deduplicate, stay silent
+    if _mcp_warned_recently(server):
+        return None, ""
+
+    _record_mcp_warned(server)
+    return (
+        f"unscanned MCP server '{server}' — tool descriptions not yet verified",
+        "medium",
+    )
 
 
 def _check_tool_specific(tool_name: str, tool_input: dict):
@@ -650,7 +728,21 @@ def decide(tool_name: str, tool_input: dict) -> dict:
             if match and llm_result["decision"] == "block" and llm_result.get("confidence", 0) >= 0.75:
                 severity = "high"
 
+    # ── MCP unknown server check (always runs, never blocks — additionalContext only) ──
+    mcp_match, _ = _check_unknown_mcp(tool_name, allowlist)
+
     if not match:
+        if mcp_match:
+            _audit("warn", "medium", tool_name, mcp_match, tool_input)
+            return {
+                "additionalContext": (
+                    f"⚠️  ARGUS — Unscanned MCP server\n"
+                    f"Server: {tool_name.split('__')[1] if '__' in tool_name else tool_name}\n"
+                    f"This server's tool descriptions have not been verified for prompt injection.\n"
+                    f"Run /scan-mcps to audit all registered MCP servers before continuing.\n"
+                    f"To silence this: add the server to trusted_mcps in ~/.argus/allowlist.json"
+                )
+            }
         return {}
 
     severity = _escalate_if_burst(severity)
@@ -672,10 +764,14 @@ def decide(tool_name: str, tool_input: dict) -> dict:
             }
         }
 
+    warn_text = _warn_message(tool_name, match, severity) + llm_note
+    if mcp_match:
+        warn_text += (
+            f"\n\n⚠️  Additionally: '{tool_name.split('__')[1] if '__' in tool_name else tool_name}' "
+            f"has not been scanned. Run /scan-mcps to verify its tool descriptions."
+        )
     _audit("warn", severity, tool_name, match, tool_input)
-    return {
-        "additionalContext": _warn_message(tool_name, match, severity) + llm_note
-    }
+    return {"additionalContext": warn_text}
 
 
 def _check_type_from_match(match: str) -> str:
