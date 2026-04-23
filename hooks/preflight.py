@@ -415,14 +415,14 @@ def _http_json(url: str, *, method: str = "GET", body: dict | None = None, timeo
 
 def _scan_package(package: str, ecosystem: str) -> dict:
     """
-    Quick pre-install scan against GitHub Advisory DB and OSV.
+    Pre-install scan against GitHub Advisory, OSV, NVD, npm registry, and PyPI.
     Returns {"findings": [...], "verdict": "clean"|"warn"|"block"}.
     """
     findings = []
     eco_ghsa = {"npm": "npm", "pip": "pip"}
     eco_osv  = {"npm": "npm", "pip": "PyPI"}
 
-    # GitHub Advisory Database
+    # ── GitHub Advisory Database ───────────────────────────────────────────────
     ghsa = _http_json(
         f"https://api.github.com/advisories"
         f"?per_page=5&ecosystem={eco_ghsa.get(ecosystem,'npm')}"
@@ -430,13 +430,13 @@ def _scan_package(package: str, ecosystem: str) -> dict:
     )
     if ghsa and isinstance(ghsa, list):
         for adv in ghsa[:3]:
-            sev  = (adv.get("severity") or "unknown").upper()
-            summ = (adv.get("summary") or "")[:100]
+            sev     = (adv.get("severity") or "unknown").upper()
+            summ    = (adv.get("summary") or "")[:100]
             ghsa_id = adv.get("ghsa_id", "?")
             findings.append({"source": "GHSA", "severity": sev,
                              "detail": f"{ghsa_id}: {summ}"})
 
-    # OSV
+    # ── Google OSV ─────────────────────────────────────────────────────────────
     osv = _http_json(
         "https://api.osv.dev/v1/query",
         method="POST",
@@ -446,6 +446,95 @@ def _scan_package(package: str, ecosystem: str) -> dict:
         for v in (osv.get("vulns") or [])[:3]:
             findings.append({"source": "OSV", "severity": "HIGH",
                              "detail": f"{v.get('id','?')}: {v.get('summary','')[:80]}"})
+
+    # ── npm registry ───────────────────────────────────────────────────────────
+    if ecosystem == "npm":
+        npm_meta = _http_json(f"https://registry.npmjs.org/{urllib.parse.quote(package, safe='@/')}")
+        if npm_meta and isinstance(npm_meta, dict):
+            latest = (npm_meta.get("dist-tags") or {}).get("latest", "")
+            versions = npm_meta.get("versions") or {}
+            # Check if any version is deprecated
+            if latest and versions.get(latest, {}).get("deprecated"):
+                findings.append({
+                    "source": "npm",
+                    "severity": "MEDIUM",
+                    "detail": f"deprecated: {str(versions[latest]['deprecated'])[:100]}",
+                })
+            # Check if published very recently (< 7 days) with no prior history
+            times = npm_meta.get("time") or {}
+            created_str = times.get("created", "")
+            if created_str:
+                try:
+                    from datetime import timezone as _tz
+                    created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                    age_days = (datetime.now(_tz.utc) - created).days
+                    if age_days < 7 and len(versions) <= 2:
+                        findings.append({
+                            "source": "npm",
+                            "severity": "LOW",
+                            "detail": f"very new package — published {age_days}d ago, {len(versions)} version(s)",
+                        })
+                except Exception:
+                    pass
+
+    # ── PyPI registry ──────────────────────────────────────────────────────────
+    if ecosystem == "pip":
+        pypi_meta = _http_json(f"https://pypi.org/pypi/{urllib.parse.quote(package)}/json")
+        if pypi_meta and isinstance(pypi_meta, dict):
+            info = pypi_meta.get("info") or {}
+            if info.get("yanked"):
+                findings.append({
+                    "source": "PyPI",
+                    "severity": "CRITICAL",
+                    "detail": f"yanked: {str(info.get('yanked_reason',''))[:100] or 'version pulled by maintainer'}",
+                })
+            for vuln in (pypi_meta.get("vulnerabilities") or [])[:3]:
+                findings.append({
+                    "source": "PyPI",
+                    "severity": "HIGH",
+                    "detail": f"{vuln.get('id','?')}: {str(vuln.get('details',''))[:80]}",
+                })
+
+    # ── NIST NVD ───────────────────────────────────────────────────────────────
+    nvd = _http_json(
+        f"https://services.nvd.nist.gov/rest/json/cves/2.0"
+        f"?keywordSearch={urllib.parse.quote(package)}&resultsPerPage=3",
+        timeout=6,
+    )
+    if nvd and isinstance(nvd, dict):
+        for item in (nvd.get("vulnerabilities") or [])[:3]:
+            cve  = item.get("cve") or {}
+            cve_id = cve.get("id", "?")
+            desc = next(
+                (d["value"] for d in (cve.get("descriptions") or []) if d.get("lang") == "en"),
+                "",
+            )[:80]
+            metrics = cve.get("metrics") or {}
+            score = None
+            sev   = "MEDIUM"
+            for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+                metric_list = metrics.get(key)
+                if metric_list:
+                    data = metric_list[0].get("cvssData") or {}
+                    score = data.get("baseScore")
+                    sev   = (data.get("baseSeverity") or "MEDIUM").upper()
+                    break
+            if score and float(score) >= 7.0:
+                findings.append({
+                    "source": "NVD",
+                    "severity": "CRITICAL" if float(score) >= 9.0 else "HIGH",
+                    "detail": f"{cve_id} (CVSS {score}): {desc}",
+                })
+
+    # Deduplicate: same CVE ID from multiple sources → keep highest severity
+    seen: dict = {}
+    deduped = []
+    for f in findings:
+        key = f["detail"][:30]
+        if key not in seen or SEVERITY_RANK.get(f["severity"].lower(), 0) > SEVERITY_RANK.get(seen[key].lower(), 0):
+            seen[key] = f["severity"]
+            deduped.append(f)
+    findings = deduped
 
     verdict = (
         "block" if any(f["severity"] in ("CRITICAL", "HIGH") for f in findings) else
@@ -478,7 +567,9 @@ def _print_scan(result: dict):
         for f in findings:
             lines.append(f"  [{f['source']}] [{f['severity']}] {f['detail']}")
     else:
-        lines.append("  GHSA: no advisories   OSV: no vulnerabilities")
+        sources = "GHSA · OSV · NVD"
+        sources += " · npm" if eco == "npm" else " · PyPI"
+        lines.append(f"  {sources}: no vulnerabilities found")
     lines += [f"  Verdict: {label}", _SCAN_BAR, ""]
 
     print("\n".join(lines), file=sys.stderr, flush=True)
@@ -495,7 +586,7 @@ def _audit_scan(package: str, ecosystem: str, verdict: str, count: int):
             "severity": "high" if verdict == "block" else "medium" if verdict == "warn" else "none",
             "tool":     "Bash",
             "matched":  f"{package} ({ecosystem}) — {count} finding(s)",
-            "sources":  ["GHSA", "OSV"],
+            "sources":  ["GHSA", "OSV", "NVD", "npm_registry", "PyPI_registry"],
             "cwd":      str(Path.cwd()),
         }
         with AUDIT_LOG.open("a") as fh:
@@ -761,9 +852,10 @@ def decide(tool_name: str, tool_input: dict) -> dict:
         return {}
 
     # ── Stage 0b: Package install scan ────────────────────────────────────────
-    # Runs before IOC checks so install commands get GHSA + OSV results
+    # Runs before IOC checks so install commands get threat intel results
     # printed to terminal AND logged, regardless of what the regex finds.
-    if tool_name == "Bash" and not os.environ.get("ARGUS_NO_LLM"):
+    # Skip when ARGUS_NO_NETWORK=1 (CI/offline) or ARGUS_NO_LLM=1.
+    if tool_name == "Bash" and not os.environ.get("ARGUS_NO_NETWORK") and not os.environ.get("ARGUS_NO_LLM"):
         cmd = tool_input.get("command") or ""
         _pkg, _eco = _detect_install(cmd)
         if _pkg:

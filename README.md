@@ -91,9 +91,9 @@ You ask Claude something
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Runtime:** hooks are 100% local, ~30–80ms per tool call, zero LLM cost during
-normal operation. Stage 2 LLM analysis (~300ms) runs for Bash/Write/Edit calls
-using your active Claude Code session — no API key needed.
+**Runtime:** most checks are local (~30–80ms). Package install detection adds
+~500ms for 5 network checks (GHSA + OSV + NVD + npm/PyPI). Stage 2 LLM analysis
+(~300ms) runs for Bash/Write/Edit via `claude -p` — no API key needed.
 
 ---
 
@@ -432,13 +432,16 @@ each one checks — no marketing, just facts.
 | OWASP patterns | Injection / API Security Top 10 patterns in IOC DB | ✅ via IOC |
 | Anthropic Discord | No public API | ❌ N/A |
 
-### `argus_scan_package` (MCP tool — programmatic HTTP)
+### `argus_scan_package` + preflight.py package install scan
+
+Both the MCP tool and the preflight hook run the same 5-source scan:
 
 | Source | What's checked | Status |
 |---|---|---|
 | GitHub Advisory Database | CVEs/GHSAs per package + ecosystem | ✅ Live API |
 | Google OSV | Open Source Vulnerabilities | ✅ Live API |
-| npm registry | Deprecated, version metadata | ✅ Live API |
+| NIST NVD | CVEs with CVSS scores | ✅ Live API |
+| npm registry | Deprecated, version metadata, age | ✅ Live API |
 | PyPI | Yanked versions, vulnerabilities | ✅ Live API |
 
 ### SKILL.md scanner (Claude-based — uses WebSearch + WebFetch)
@@ -459,12 +462,25 @@ each one checks — no marketing, just facts.
 | MCPScan.ai | — | ❌ Not in SKILL.md |
 | Anthropic Discord | No public API — not searchable | ❌ N/A |
 
-### Runtime hooks (preflight.py — always on, no network)
+### Runtime hooks (preflight.py — always on)
 
-The hooks never make network requests. All detection is local:
+Most checks are local (~1ms). When a package install is detected, the hook
+makes network requests to 5 sources before allowing the install:
+
+| Source | What's checked | Auth needed |
+|---|---|---|
+| GitHub Advisory Database | CVEs/GHSAs for the package | No (60 req/h free; set `GITHUB_TOKEN` for 5000/h) |
+| Google OSV | Open Source Vulnerabilities | No |
+| NIST NVD | CVEs with CVSS scores | No (rate-limited; use `NVD_API_KEY` for more) |
+| npm registry | Deprecated versions, very new packages | No |
+| PyPI registry | Yanked versions, known vulnerabilities | No |
+
+For all other tool calls (non-install), detection is local:
 - IOC regex database (12 check types)
 - LLM second opinion via `claude -p` (active session, no API key)
 - MCP unknown server detection (file-based state)
+
+To disable network checks (CI/offline): set `ARGUS_NO_NETWORK=1`
 
 ---
 
