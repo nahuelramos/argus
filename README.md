@@ -420,7 +420,7 @@ each one checks — no marketing, just facts.
 |---|---|---|
 | GitHub Advisory Database | Known CVEs/GHSAs for the package | ✅ Live API |
 | VulnerableMCP.info | MCP-specific incident database | ✅ Live API (+ local fallback) |
-| MCPScan.ai | Checks homepage for published scan results; no search API exists — links to manual submission | ✅ WebFetch (homepage scan) |
+| MCPScan.ai | No search API — accepts repo URLs for manual submission only | ❌ Removed |
 | GitHub Issues | Community-reported security incidents | ✅ GitHub Search API |
 | npm / PyPI registry | Deprecation, version, source repo | ✅ Live API |
 | Source integrity | SHA-256 of local scripts, repo URL check | ✅ Local |
@@ -459,7 +459,7 @@ Both the MCP tool and the preflight hook run the same 5-source scan:
 | GitHub Issues on MCP repos | Active bug reports and security disclosures | ✅ WebSearch |
 | Local static analysis | IOC patterns, entropy, injection | ✅ Local |
 | OWASP classification | Labels findings with AS01–AS10 / MCP01–MCP05 | ✅ Applied to all findings |
-| MCPScan.ai | — | ❌ Not in SKILL.md |
+| MCPScan.ai | No search API — manual repo submission only | ❌ N/A |
 | Anthropic Discord | No public API — not searchable | ❌ N/A |
 
 ### Runtime hooks (preflight.py — always on)
@@ -501,7 +501,7 @@ The Argus MCP server exposes **7 tools** Claude can call proactively or on deman
 
 | Tool | What it does |
 |---|---|
-| `argus_scan_mcp` | Full audit: GHSA + VulnerableMCP.info + MCPScan.ai + GitHub Issues + source integrity + static description analysis. Marks clean servers trusted — auto-warning stops. |
+| `argus_scan_mcp` | Full audit: GHSA + VulnerableMCP.info + GitHub Issues + source integrity + static description analysis. Marks clean servers trusted — auto-warning stops. |
 | `argus_mcp_snapshot` | Saves SHA-256 baseline of all tool descriptions. Run once after verifying. |
 | `argus_mcp_diff` | Compares current descriptions vs baseline — detects supply chain modifications. |
 
@@ -561,7 +561,7 @@ Run a full security audit of all registered MCP servers:
 
 Claude will:
 1. Inventory all connected MCP servers
-2. Call `argus_scan_mcp` for each (VulnerableMCP.info + MCPScan.ai + static analysis)
+2. Call `argus_scan_mcp` for each (GHSA + VulnerableMCP.info + GitHub Issues + static analysis)
 3. Diff current tool descriptions against saved baselines
 4. Print a summary table: Server | Tools | VulnerableMCP | Injection | Diff | Verdict
 5. Save baselines for clean servers (silences future preflight.py warnings)

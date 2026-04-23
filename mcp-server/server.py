@@ -270,32 +270,6 @@ def _check_vulnerablemcp(server_name: str) -> list[str]:
     return findings
 
 
-def _check_mcpscan(server_name: str) -> list[str]:
-    """
-    MCPScan.ai does not expose a search-by-name API — it's a scanner you submit
-    code to, not a queryable database. We do a plain HTTP fetch of their homepage
-    and check if the server name appears in any published scan results on the page.
-    Falls back to a manual-submission note if nothing is found.
-    """
-    name = server_name.split("/")[-1].split("@")[0].strip().lower()
-
-    try:
-        req = urllib.request.Request(
-            "https://mcpscan.ai",
-            headers={"User-Agent": "argus-security/1.0"}
-        )
-        with urllib.request.urlopen(req, timeout=7) as resp:
-            html = resp.read().decode("utf-8", errors="ignore").lower()
-
-        if name in html:
-            return [f"[MCPScan.ai] '{server_name}' appears in published scan results — "
-                    f"check https://mcpscan.ai manually for details"]
-        else:
-            return [f"[MCPScan.ai] No published results for '{server_name}' — "
-                    f"submit for scanning at https://mcpscan.ai"]
-
-    except Exception:
-        return [f"[MCPScan.ai] Unavailable — submit manually at https://mcpscan.ai"]
 
 
 def _check_github_advisory(server_name: str, server_command: str) -> list[str]:
@@ -683,8 +657,8 @@ async def list_tools() -> list[types.Tool]:
             name="argus_scan_mcp",
             description=(
                 "Scan an MCP server for security risks. "
-                "Queries 4 threat intelligence sources: GitHub Advisory Database, "
-                "VulnerableMCP.info, MCPScan.ai, and GitHub Issues. "
+                "Queries 3 threat intelligence sources: GitHub Advisory Database, "
+                "VulnerableMCP.info, and GitHub Issues. "
                 "Also performs static analysis on tool descriptions for prompt injection, "
                 "zero-width char hiding, coherence mismatches, and source integrity. "
                 "Call this for every MCP server before trusting its tools."
@@ -941,20 +915,14 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         for h in vuln_hits:
             lines.append(f"  {h}")
 
-        # 3. MCPScan.ai
-        lines.append("\n[3] MCPScan.ai")
-        scan_hits = _check_mcpscan(server_name)
-        for h in scan_hits:
-            lines.append(f"  {h}")
-
-        # 4. GitHub Issues (security reports from the community)
-        lines.append("\n[4] GitHub Issues (security reports)")
+        # 3. GitHub Issues (security reports from the community)
+        lines.append("\n[3] GitHub Issues (security reports)")
         issues_hits = _check_github_issues(server_name, server_command)
         for h in issues_hits:
             lines.append(f"  {h}")
 
-        # 5. Source integrity (GitHub-based packages)
-        lines.append("\n[5] Source Integrity")
+        # 4. Source integrity (GitHub-based packages)
+        lines.append("\n[4] Source Integrity")
         cmd_lower = server_command.lower()
         if "npx" in cmd_lower or "uvx" in cmd_lower:
             # Extract package name from command
@@ -986,8 +954,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         else:
             lines.append("  (no source integrity check for this command type)")
 
-        # 6. Static description analysis
-        lines.append("\n[6] Tool Description Analysis")
+        # 5. Static description analysis
+        lines.append("\n[5] Tool Description Analysis")
         if tools:
             desc_findings = _analyze_descriptions(tools)
             if desc_findings:
@@ -1002,7 +970,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         # Summary verdict
         all_findings = [f for f in (desc_findings if tools else [])
                         if f["severity"] in ("critical", "high")]
-        all_remote_hits = ghsa_hits + vuln_hits + scan_hits + issues_hits
+        all_remote_hits = ghsa_hits + vuln_hits + issues_hits
         is_suspicious = (
             any("known-malicious" in h or "[GHSA]" in h and "No advisories" not in h
                 and "unavailable" not in h and "[OPEN]" in h
@@ -1027,7 +995,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         _print_to_console(f"\n{_SCAN_BAR}\n{output}\n{_SCAN_BAR}\n")
         _audit_scan_result(
             server_name, verdict,
-            sources=["GHSA", "VulnerableMCP.info", "MCPScan.ai", "GitHub Issues",
+            sources=["GHSA", "VulnerableMCP.info", "GitHub Issues",
                      "source-integrity", "static-analysis"],
             findings_count=len(all_findings) + len([
                 h for h in all_remote_hits
