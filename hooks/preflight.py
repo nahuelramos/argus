@@ -16,6 +16,8 @@ import re
 import sys
 import time
 import hashlib
+import urllib.request
+import urllib.parse
 from collections import Counter
 from pathlib import Path as _Path
 
@@ -365,6 +367,143 @@ def _check_unknown_mcp(tool_name: str, allowlist: dict) -> tuple:
     )
 
 
+# ── Package install scanning ──────────────────────────────────────────────────
+
+_INSTALL_RE = [
+    (r'(?:^|\s)npm\s+(?:install|i)\s+((?:@[^\s/]+/)?[^\s\-@][^\s@]*)', "npm"),
+    (r'(?:^|\s)yarn\s+add\s+((?:@[^\s/]+/)?[^\s\-@][^\s@]*)',           "npm"),
+    (r'(?:^|\s)pnpm\s+add\s+((?:@[^\s/]+/)?[^\s\-@][^\s@]*)',           "npm"),
+    (r'(?:^|\s)pip3?\s+install\s+([^\s\-][^\s]*)',                       "pip"),
+    (r'(?:^|\s)pip3?\s+install\s+--\S+\s+([^\s\-][^\s]*)',              "pip"),
+    (r'(?:^|\s)uv\s+add\s+([^\s\-][^\s]*)',                              "pip"),
+]
+
+
+def _strip_version(pkg: str) -> str:
+    """Remove @version suffix while preserving @scope/name for scoped packages."""
+    if pkg.startswith("@") and "/" in pkg:
+        # @scope/name@version → @scope/name
+        scope, rest = pkg.split("/", 1)
+        return scope + "/" + rest.split("@")[0]
+    return pkg.split("@")[0]
+
+
+def _detect_install(cmd: str):
+    """Return (package, ecosystem) if cmd is a package install, else (None, None)."""
+    for rx, eco in _INSTALL_RE:
+        m = re.search(rx, cmd, re.IGNORECASE)
+        if m:
+            pkg = _strip_version(m.group(1).rstrip(";").strip())
+            if pkg and not pkg.startswith("-"):
+                return pkg, eco
+    return None, None
+
+
+def _http_json(url: str, *, method: str = "GET", body: dict | None = None, timeout: int = 7):
+    """Minimal HTTP helper — returns parsed JSON or None on any error."""
+    try:
+        data = json.dumps(body).encode() if body else None
+        headers = {"User-Agent": "argus-security/1.0"}
+        if body:
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return None
+
+
+def _scan_package(package: str, ecosystem: str) -> dict:
+    """
+    Quick pre-install scan against GitHub Advisory DB and OSV.
+    Returns {"findings": [...], "verdict": "clean"|"warn"|"block"}.
+    """
+    findings = []
+    eco_ghsa = {"npm": "npm", "pip": "pip"}
+    eco_osv  = {"npm": "npm", "pip": "PyPI"}
+
+    # GitHub Advisory Database
+    ghsa = _http_json(
+        f"https://api.github.com/advisories"
+        f"?per_page=5&ecosystem={eco_ghsa.get(ecosystem,'npm')}"
+        f"&package={urllib.parse.quote(package)}"
+    )
+    if ghsa and isinstance(ghsa, list):
+        for adv in ghsa[:3]:
+            sev  = (adv.get("severity") or "unknown").upper()
+            summ = (adv.get("summary") or "")[:100]
+            ghsa_id = adv.get("ghsa_id", "?")
+            findings.append({"source": "GHSA", "severity": sev,
+                             "detail": f"{ghsa_id}: {summ}"})
+
+    # OSV
+    osv = _http_json(
+        "https://api.osv.dev/v1/query",
+        method="POST",
+        body={"package": {"ecosystem": eco_osv.get(ecosystem, "npm"), "name": package}},
+    )
+    if osv:
+        for v in (osv.get("vulns") or [])[:3]:
+            findings.append({"source": "OSV", "severity": "HIGH",
+                             "detail": f"{v.get('id','?')}: {v.get('summary','')[:80]}"})
+
+    verdict = (
+        "block" if any(f["severity"] in ("CRITICAL", "HIGH") for f in findings) else
+        "warn"  if findings else
+        "clean"
+    )
+    return {"package": package, "ecosystem": ecosystem,
+            "findings": findings, "verdict": verdict}
+
+
+_SCAN_BAR = "━" * 50
+
+
+def _print_scan(result: dict):
+    """Print package scan result to stderr → appears in terminal immediately."""
+    pkg     = result["package"]
+    eco     = result["ecosystem"]
+    verdict = result["verdict"]
+    findings = result["findings"]
+
+    icon  = {"block": "🚫", "warn": "⚠️ ", "clean": "✅"}[verdict]
+    label = {"block": "BLOCKED", "warn": "WARNING", "clean": "CLEAN"}[verdict]
+
+    lines = [
+        f"\n{_SCAN_BAR}",
+        f"  {icon}  ARGUS — Package scan: {pkg} ({eco})",
+        _SCAN_BAR,
+    ]
+    if findings:
+        for f in findings:
+            lines.append(f"  [{f['source']}] [{f['severity']}] {f['detail']}")
+    else:
+        lines.append("  GHSA: no advisories   OSV: no vulnerabilities")
+    lines += [f"  Verdict: {label}", _SCAN_BAR, ""]
+
+    print("\n".join(lines), file=sys.stderr, flush=True)
+
+
+def _audit_scan(package: str, ecosystem: str, verdict: str, count: int):
+    """Write a package scan event to the audit log."""
+    try:
+        AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts":       datetime.now(timezone.utc).isoformat(),
+            "hook":     "PreToolUse/PackageScan",
+            "decision": verdict,
+            "severity": "high" if verdict == "block" else "medium" if verdict == "warn" else "none",
+            "tool":     "Bash",
+            "matched":  f"{package} ({ecosystem}) — {count} finding(s)",
+            "sources":  ["GHSA", "OSV"],
+            "cwd":      str(Path.cwd()),
+        }
+        with AUDIT_LOG.open("a") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
 def _check_tool_specific(tool_name: str, tool_input: dict):
     """Extra checks specific to particular tool types."""
     if tool_name in ("Bash",):
@@ -620,6 +759,34 @@ def decide(tool_name: str, tool_input: dict) -> dict:
     # ── Stage 0: Trusted integration? Allow immediately ───────────────────────
     if _check_trusted_integrations(strings, tool_name, allowlist):
         return {}
+
+    # ── Stage 0b: Package install scan ────────────────────────────────────────
+    # Runs before IOC checks so install commands get GHSA + OSV results
+    # printed to terminal AND logged, regardless of what the regex finds.
+    if tool_name == "Bash" and not os.environ.get("ARGUS_NO_LLM"):
+        cmd = tool_input.get("command") or ""
+        _pkg, _eco = _detect_install(cmd)
+        if _pkg:
+            _scan = _scan_package(_pkg, _eco)
+            _print_scan(_scan)
+            _audit_scan(_pkg, _eco, _scan["verdict"], len(_scan["findings"]))
+            if _scan["verdict"] == "block":
+                _audit("block", "high", tool_name, f"[PackageScan] {_pkg}", tool_input)
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": (
+                            f"🚫 ARGUS — Package blocked: {_pkg} ({_eco})\n\n"
+                            f"Known vulnerabilities:\n" +
+                            "\n".join(f"  • [{f['source']}] {f['detail']}"
+                                      for f in _scan["findings"]) +
+                            f"\n\nFull details printed to terminal.\n"
+                            f"Audit log: ~/.argus/logs/audit.jsonl"
+                        ),
+                    }
+                }
+            # warn → continue to regular checks; scan already printed to terminal
 
     # ── Stage 1: Regex / IOC checks ───────────────────────────────────────────
     # Two content-scan levels for Write/Edit:

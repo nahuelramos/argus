@@ -531,6 +531,56 @@ def _diff_snapshots(old: dict, new_tools: list[dict]) -> list[dict]:
     return changes
 
 
+_SCAN_BAR = "━" * 50
+
+
+def _print_to_console(text: str):
+    """Print to stderr so it appears in the terminal (Claude Code CLI) immediately."""
+    print(text, file=sys.stderr, flush=True)
+
+
+def _audit_scan_result(server_name: str, verdict: str, sources: list[str], findings_count: int):
+    """Write an MCP scan event to the audit log."""
+    try:
+        AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts":            datetime.now(timezone.utc).isoformat(),
+            "hook":          "MCPServer/Scan",
+            "decision":      verdict,
+            "severity":      "high" if verdict == "suspicious" else "none",
+            "tool":          "argus_scan_mcp",
+            "matched":       server_name,
+            "sources":       sources,
+            "findings_count": findings_count,
+            "cwd":           str(Path.cwd()),
+        }
+        with AUDIT_LOG.open("a") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
+def _audit_pkg_scan_result(package: str, ecosystem: str, verdict: str, findings_count: int):
+    """Write a package scan event to the audit log."""
+    try:
+        AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts":            datetime.now(timezone.utc).isoformat(),
+            "hook":          "MCPServer/PackageScan",
+            "decision":      verdict,
+            "severity":      "high" if verdict == "block" else "medium" if verdict == "warn" else "none",
+            "tool":          "argus_scan_package",
+            "matched":       f"{package} ({ecosystem})",
+            "sources":       ["GHSA", "OSV", "npm" if ecosystem == "npm" else "PyPI"],
+            "findings_count": findings_count,
+            "cwd":           str(Path.cwd()),
+        }
+        with AUDIT_LOG.open("a") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
 def _audit(result: dict):
     try:
         AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -820,7 +870,23 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             except Exception as e:
                 results.append(f"[PyPI] Unavailable: {e}")
 
-        output = f"Package scan: {package} ({ecosystem})\n" + "\n".join(results)
+        has_vuln = any(
+            any(sev in r for sev in ("CRITICAL", "HIGH", "MODERATE", "YANKED", "DEPRECATED"))
+            for r in results
+        )
+        verdict = "block" if any("CRITICAL" in r or "YANKED" in r for r in results) else \
+                  "warn"  if has_vuln else "clean"
+        icon    = {"block": "🚫", "warn": "⚠️ ", "clean": "✅"}[verdict]
+        output  = (
+            f"{_SCAN_BAR}\n"
+            f"  {icon}  ARGUS — Package scan: {package} ({ecosystem})\n"
+            f"{_SCAN_BAR}\n"
+        ) + "\n".join(f"  {r}" for r in results) + f"\n{_SCAN_BAR}"
+
+        # Print to terminal + audit log
+        _print_to_console(f"\n{output}\n")
+        _audit_pkg_scan_result(package, ecosystem, verdict, sum(1 for r in results if "[" in r))
+
         return [types.TextContent(type="text", text=output)]
 
     # ── argus_scan_file ───────────────────────────────────────────────────────
@@ -935,6 +1001,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             or any("[VulnerableMCP/local]" in h for h in all_remote_hits)
             or bool(all_findings)
         )
+        verdict = "suspicious" if is_suspicious else "clean"
         if is_suspicious:
             lines.append("\n🚫 VERDICT: SUSPICIOUS — review before using this server")
         else:
@@ -945,7 +1012,22 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             )
             _mark_scanned_clean(server_name)
 
-        return [types.TextContent(type="text", text="\n".join(lines))]
+        output = "\n".join(lines)
+
+        # Print to terminal + audit log
+        _print_to_console(f"\n{_SCAN_BAR}\n{output}\n{_SCAN_BAR}\n")
+        _audit_scan_result(
+            server_name, verdict,
+            sources=["GHSA", "VulnerableMCP.info", "MCPScan.ai", "GitHub Issues",
+                     "source-integrity", "static-analysis"],
+            findings_count=len(all_findings) + len([
+                h for h in all_remote_hits
+                if "unavailable" not in h and "No advisories" not in h
+                   and "No security" not in h and "No known" not in h
+            ]),
+        )
+
+        return [types.TextContent(type="text", text=output)]
 
     # ── argus_mcp_snapshot ────────────────────────────────────────────────────
     elif name == "argus_mcp_snapshot":

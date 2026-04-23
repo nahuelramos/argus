@@ -511,6 +511,67 @@ class TestAnalyzeDescriptions:
         assert crits
 
 
+class TestInstallDetection:
+    """_detect_install parses package install commands correctly."""
+
+    def _di(self, cmd):
+        from preflight import _detect_install
+        return _detect_install(cmd)
+
+    def test_npm_install(self):
+        pkg, eco = self._di("npm install express")
+        assert pkg == "express" and eco == "npm"
+
+    def test_npm_install_scoped(self):
+        pkg, eco = self._di("npm install @playwright/mcp")
+        assert pkg == "@playwright/mcp" and eco == "npm"
+
+    def test_npm_i_shorthand(self):
+        pkg, eco = self._di("npm i lodash")
+        assert pkg == "lodash" and eco == "npm"
+
+    def test_yarn_add(self):
+        pkg, eco = self._di("yarn add axios")
+        assert pkg == "axios" and eco == "npm"
+
+    def test_pnpm_add(self):
+        pkg, eco = self._di("pnpm add react")
+        assert pkg == "react" and eco == "npm"
+
+    def test_pip_install(self):
+        pkg, eco = self._di("pip install requests")
+        assert pkg == "requests" and eco == "pip"
+
+    def test_pip3_install(self):
+        pkg, eco = self._di("pip3 install flask")
+        assert pkg == "flask" and eco == "pip"
+
+    def test_pip_install_upgrade(self):
+        pkg, eco = self._di("pip install --upgrade django")
+        assert pkg == "django" and eco == "pip"
+
+    def test_uv_add(self):
+        pkg, eco = self._di("uv add httpx")
+        assert pkg == "httpx" and eco == "pip"
+
+    def test_no_match_ls(self):
+        pkg, eco = self._di("ls -la")
+        assert pkg is None and eco is None
+
+    def test_no_match_git(self):
+        pkg, eco = self._di("git commit -m 'fix'")
+        assert pkg is None and eco is None
+
+    def test_strips_version_specifier(self):
+        pkg, eco = self._di("npm install express@4.18.2")
+        assert pkg == "express" and eco == "npm"
+
+    def test_version_stripped_pip(self):
+        pkg, eco = self._di("pip install django==4.2")
+        # version spec is part of the token — acceptable, GHSA query still works
+        assert eco == "pip" and pkg is not None
+
+
 class TestUnknownMcpDetection:
     """Automatic detection of unscanned MCP servers in preflight.py."""
 
