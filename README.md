@@ -450,14 +450,14 @@ each one checks — no marketing, just facts.
 | NIST NVD | CVE database (CVSS scores) | ✅ HTTP |
 | npm / PyPI registries | Version, deprecation | ✅ HTTP |
 | VulnerableMCP.info | MCP incident database | ✅ WebFetch |
-| Snyk | Vulnerability count per package | ✅ WebFetch |
-| Reddit r/mcp + r/ClaudeAI | Community security reports | ✅ WebSearch |
+| Snyk / ToxicSkills Research | Enterprise malware analysis, 1,467 toxic skills dataset | ✅ WebSearch + WebFetch |
+| ClawHub / OpenClaw Registry | Skill registry + VirusTotal results, Feb 2026 purge | ✅ WebSearch + WebFetch |
+| Reddit r/ClaudeAI + r/mcp | Community early warnings | ✅ WebSearch |
+| GitHub Issues on MCP repos | Active bug reports and security disclosures | ✅ WebSearch |
 | Local static analysis | IOC patterns, entropy, injection | ✅ Local |
+| OWASP classification | Labels findings with AS01–AS10 / MCP01–MCP05 | ✅ Applied to all findings |
 | MCPScan.ai | — | ❌ Not in SKILL.md |
-| ClawHub / OpenClaw | No public API | ❌ N/A |
-| ToxicSkills Research | No public API | ❌ N/A |
-| Anthropic Discord | No public API | ❌ N/A |
-| GitHub Issues | Covered via WebSearch | ✅ Indirect |
+| Anthropic Discord | No public API — not searchable | ❌ N/A |
 
 ### Runtime hooks (preflight.py — always on, no network)
 

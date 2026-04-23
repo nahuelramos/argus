@@ -14,18 +14,21 @@ Invoke when the user mentions any of:
 
 ## What this skill does
 
-Scans installed MCPs and Claude Code skills against 7 threat intelligence sources
-and performs local static analysis. Reports findings with severity ratings.
+Scans installed MCPs and Claude Code skills against 10 threat intelligence sources
+and performs local static analysis. Reports findings with severity ratings and
+OWASP classification for each vulnerability found.
 
 **Sources checked:**
-1. GitHub Advisory Database (GHSA)
-2. Google OSV Database
-3. NIST NVD (CVE database)
-4. npm / PyPI registries (deprecation, version alerts)
-5. vulnerablemcp.info (MCP-specific incidents)
-6. Snyk security database
-7. Reddit community alerts (/r/mcp, /r/ClaudeAI, /r/MachineLearning)
-8. Local static analysis (IOC pattern matching, coherence check, entropy)
+1. GitHub Advisory Database (GHSA) — formal CVE database
+2. Google OSV Database — open source vulnerabilities
+3. NIST NVD (CVE database) — authoritative CVSS scores
+4. npm / PyPI registries — deprecation, version alerts
+5. VulnerableMCP.info — MCP-specific incident tracker
+6. Snyk / ToxicSkills Research — enterprise malware analysis
+7. ClawHub / OpenClaw Registry — skill registry with VirusTotal
+8. Reddit r/ClaudeAI + r/mcp — community early warnings
+9. GitHub Issues on MCP repos — active bug reports and disclosures
+10. Local static analysis — IOC patterns, injection, entropy, coherence
 
 ---
 
@@ -171,43 +174,110 @@ If found, extract the vulnerability title, description, and severity.
 
 ---
 
-### CHECK G: Snyk Security Database
+### CHECK G: Snyk / ToxicSkills Research
 
-**URL:** `https://security.snyk.io/package/npm/{package_name}` (for npm)
-**URL:** `https://security.snyk.io/package/pip/{package_name}` (for pip)
+**Primary URL:** `https://security.snyk.io/package/npm/{package_name}` (for npm)
+**Primary URL:** `https://security.snyk.io/package/pip/{package_name}` (for pip)
 
 Fetch the page and look for:
-- Vulnerability count in the page
-- Severity breakdown (critical/high/medium/low)
+- Vulnerability count and severity breakdown (critical/high/medium/low)
 - Any CVE IDs mentioned
+- Whether it appears in the ToxicSkills dataset
 
-**What to report:** Any high/critical vulnerabilities found = HIGH finding.
+Also run these web searches (ToxicSkills identified 1,467 malicious skills in registries):
+```
+site:snyk.io "{name}" vulnerability
+site:snyk.io toxicskills "{name}"
+"{name}" toxicskills malicious MCP skill
+snyk "{package_name}" malware supply chain
+```
+
+**What to report:** Any high/critical Snyk finding = HIGH. ToxicSkills mention = CRITICAL.
 
 ---
 
-### CHECK H: Reddit community alerts
+### CHECK H: ClawHub / OpenClaw Registry
+
+**URL:** `https://openclaw.ai`
+
+ClawHub is a skill registry with VirusTotal integration. In February 2026, 13,729
+skills were purged down to 3,286 after a mass security review — check if the item
+was affected.
+
+Fetch the OpenClaw page for the skill if it exists:
+```
+https://openclaw.ai/skills/{name}
+```
+
+Also run these web searches:
+```
+site:openclaw.ai "{name}"
+"{name}" ClawHub VirusTotal malicious
+"{name}" openclaw security rating
+"{name}" skill purge february 2026
+```
+
+Look for:
+- VirusTotal scan results (any detections = HIGH)
+- Community safety ratings
+- Whether it was removed in the February 2026 purge
+- Any "unverified" or "flagged" status badges
+
+**What to report:** VirusTotal detections = CRITICAL. Purge removal = HIGH. Unverified status = MEDIUM.
+
+---
+
+### CHECK I: Reddit community alerts
 
 Run these web searches:
 
 ```
 "{name}" MCP malicious OR backdoor OR vulnerability OR compromised site:reddit.com
 "{name}" MCP site:reddit.com/r/mcp OR site:reddit.com/r/ClaudeAI
-"{package_name}" npm malicious backdoor supply chain 2025 site:reddit.com
+"{package_name}" npm malicious backdoor supply chain 2025 2026 site:reddit.com
+"{name}" site:reddit.com/r/ClaudeAI security warning
 ```
 
-Also search for general community reports:
+Also search broadly:
 ```
 "{name}" MCP security warning 2025 2026
 "{package_name}" npm backdoor credential theft
 ```
 
-Look for posts reporting malicious behavior, data theft, or security incidents.
+Look for posts reporting malicious behavior, data theft, or suspicious activity.
+Cross-reference community reports before escalating — a single unverified post = MEDIUM.
 
-**What to report:** Any confirmed community report = HIGH. Unverified reports = MEDIUM.
+**What to report:** Confirmed community report = HIGH. Unverified single post = MEDIUM.
 
 ---
 
-### CHECK I: Local static analysis
+### CHECK J: GitHub Issues on MCP repos
+
+Search for security reports in official and third-party MCP repositories:
+
+```
+repo:modelcontextprotocol/servers label:security "{name}"
+repo:modelcontextprotocol/servers "vulnerability" OR "CVE" "{name}"
+repo:{owner}/{repo} "vulnerability" OR "security" OR "CVE"
+```
+
+Replace `{owner}/{repo}` with the actual repository if known from the package metadata.
+
+Also search GitHub broadly:
+```
+"{name}" MCP "security" OR "vulnerability" OR "backdoor" site:github.com
+```
+
+Look for:
+- Open security issues (especially with no response from maintainer)
+- Closed issues that reference CVEs or malicious behavior
+- PRs that fixed security problems (read the diff for context)
+
+**What to report:** Open unacknowledged security issue = HIGH. Closed fixed = LOW (note the fix).
+
+---
+
+### CHECK K: Local static analysis
 
 Run the local scanner against the skill/MCP source files:
 
@@ -226,6 +296,35 @@ Parse the JSON output:
 - `risk_score` — numeric score
 
 **What to report:** All findings from static analysis, grouped by severity.
+
+---
+
+## STEP 2b — OWASP classification
+
+For every finding from STEP 2, classify it using the relevant OWASP framework.
+Do NOT search OWASP — use it only to label what you already found.
+
+**OWASP Agentic Skills Top 10** (use when the item is a skill or MCP tool):
+- **AS01** Skill poisoning / backdoors
+- **AS02** Excessive permission requests
+- **AS03** Data exfiltration via tool calls
+- **AS04** Prompt injection through skill content
+- **AS05** Supply chain attacks
+- **AS06** Credential harvesting
+- **AS07** Sandbox escapes
+- **AS08** Cross-skill contamination
+- **AS09** Privilege escalation
+- **AS10** Insufficient input validation
+
+**OWASP MCP Top 10** (use when the item is an MCP server):
+- **MCP01** Tool description poisoning
+- **MCP02** Unauthorized data access
+- **MCP03** Excessive tool permissions
+- **MCP04** Insecure transport
+- **MCP05** Supply chain compromise
+
+Add the OWASP reference to each finding in the report, e.g.:
+`[GHSA-xxxx] Remote code execution — OWASP AS05 (Supply chain attack)`
 
 ---
 
@@ -278,16 +377,17 @@ Project: {cwd}
 Items scanned: {count}
 
 ## Summary
-| Item | Type | Risk | Findings |
-|------|------|------|----------|
-| name | mcp_server | CRITICAL | 3 findings |
+| Item | Type | Risk | Findings | OWASP |
+|------|------|------|----------|-------|
+| name | mcp_server | CRITICAL | 3 findings | AS05, MCP01 |
 ...
 
 ## Critical Findings
 ### [item name]
-**Source:** GitHub Advisory / OSV / Static Analysis / etc.
+**Source:** GitHub Advisory / OSV / Snyk / ClawHub / Static Analysis / etc.
 **Finding:** Description
 **CVE/GHSA:** if applicable
+**OWASP:** AS01–AS10 / MCP01–MCP05 reference
 **Affected versions:** if applicable
 **Recommendation:** Update to X / Remove / Allowlist
 
@@ -305,11 +405,14 @@ Items scanned: {count}
 - GitHub Advisory DB: {timestamp}
 - Google OSV: {timestamp}
 - NIST NVD: {timestamp}
-- npm Registry: {timestamp}
-- vulnerablemcp.info: {timestamp}
-- Snyk: {timestamp}
-- Reddit community: {timestamp}
+- npm / PyPI Registry: {timestamp}
+- VulnerableMCP.info: {timestamp}
+- Snyk / ToxicSkills: {timestamp}
+- ClawHub / OpenClaw: {timestamp}
+- Reddit r/ClaudeAI + r/mcp: {timestamp}
+- GitHub Issues: {timestamp}
 - Local static analysis: {timestamp}
+- OWASP classification: applied to all findings
 ```
 
 Also update the local threat database:
@@ -326,7 +429,7 @@ Write a JSON threat DB entry:
       "name": "...",
       "risk_level": "...",
       "findings_count": 0,
-      "sources_checked": ["github_advisory", "osv", "nvd", "npm", "vulnerablemcp", "snyk", "reddit", "local"]
+      "sources_checked": ["github_advisory", "osv", "nvd", "npm", "vulnerablemcp", "snyk_toxicskills", "clawhub", "reddit", "github_issues", "local"]
     }
   ]
 }
@@ -342,7 +445,7 @@ Show a clear summary:
 Argus Scan Complete — {date}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Scanned: {count} MCPs/skills
-Sources: GitHub GHSA · OSV · NVD · npm · vulnerablemcp.info · Snyk · Reddit
+Sources: GHSA · OSV · NVD · npm/PyPI · VulnerableMCP · Snyk/ToxicSkills · ClawHub · Reddit · GitHub Issues · Static
 
 CRITICAL  ▸ [item names]
 HIGH      ▸ [item names]
@@ -364,7 +467,7 @@ For each CRITICAL or HIGH item, give a one-line recommendation:
 
 - If an API returns an error or times out, log it in the report as "source unavailable" and continue with other sources.
 - If no MCPs or skills are found, say so clearly and offer to scan a specific path.
-- If the user asks to scan a specific MCP by name that isn't installed, run CHECK A through CHECK H using that name directly.
+- If the user asks to scan a specific MCP by name that isn't installed, run CHECK A through CHECK K using that name directly.
 - Never stop the scan because one source failed — always run all available checks.
 
 ---
@@ -378,9 +481,12 @@ If the user mentions installing a new MCP or skill, run all checks BEFORE instal
 3. Run CHECK B (OSV)
 4. Run CHECK C (NVD)
 5. Run CHECK D or E (registry metadata)
-6. Run CHECK F (vulnerablemcp.info)
-7. Run CHECK G (Snyk)
-8. Run CHECK H (Reddit)
+6. Run CHECK F (VulnerableMCP.info)
+7. Run CHECK G (Snyk / ToxicSkills)
+8. Run CHECK H (ClawHub / OpenClaw)
+9. Run CHECK I (Reddit)
+10. Run CHECK J (GitHub Issues)
+11. Apply OWASP classification (STEP 2b) to any findings
 
 Report findings BEFORE the user installs anything.
 If CRITICAL findings exist, strongly recommend against installation.
