@@ -271,22 +271,31 @@ def _check_vulnerablemcp(server_name: str) -> list[str]:
 
 
 def _check_mcpscan(server_name: str) -> list[str]:
-    """Query MCPScan.ai for risk score / known issues."""
-    findings = []
-    name = server_name.split("/")[-1].split("@")[0].strip()
+    """
+    MCPScan.ai does not expose a search-by-name API — it's a scanner you submit
+    code to, not a queryable database. We do a plain HTTP fetch of their homepage
+    and check if the server name appears in any published scan results on the page.
+    Falls back to a manual-submission note if nothing is found.
+    """
+    name = server_name.split("/")[-1].split("@")[0].strip().lower()
 
-    data = _http_get(f"https://www.mcpscan.ai/api/scan?package={urllib.parse.quote(name)}")
-    if data:
-        risk  = data.get("risk_level") or data.get("risk") or "unknown"
-        score = data.get("score") or data.get("risk_score") or "?"
-        issues = data.get("issues") or data.get("findings") or []
-        findings.append(f"[MCPScan.ai] risk={risk}  score={score}")
-        for issue in issues[:3]:
-            findings.append(f"[MCPScan.ai] {issue.get('title','?')}: {issue.get('description','')[:100]}")
-    else:
-        findings.append("[MCPScan.ai] Service unavailable — skipped")
+    try:
+        req = urllib.request.Request(
+            "https://mcpscan.ai",
+            headers={"User-Agent": "argus-security/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=7) as resp:
+            html = resp.read().decode("utf-8", errors="ignore").lower()
 
-    return findings
+        if name in html:
+            return [f"[MCPScan.ai] '{server_name}' appears in published scan results — "
+                    f"check https://mcpscan.ai manually for details"]
+        else:
+            return [f"[MCPScan.ai] No published results for '{server_name}' — "
+                    f"submit for scanning at https://mcpscan.ai"]
+
+    except Exception:
+        return [f"[MCPScan.ai] Unavailable — submit manually at https://mcpscan.ai"]
 
 
 def _check_github_advisory(server_name: str, server_command: str) -> list[str]:

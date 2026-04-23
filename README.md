@@ -420,7 +420,7 @@ each one checks — no marketing, just facts.
 |---|---|---|
 | GitHub Advisory Database | Known CVEs/GHSAs for the package | ✅ Live API |
 | VulnerableMCP.info | MCP-specific incident database | ✅ Live API (+ local fallback) |
-| MCPScan.ai | Risk score and known issues | ✅ Live API (graceful fallback) |
+| MCPScan.ai | Checks homepage for published scan results; no search API exists — links to manual submission | ✅ WebFetch (homepage scan) |
 | GitHub Issues | Community-reported security incidents | ✅ GitHub Search API |
 | npm / PyPI registry | Deprecation, version, source repo | ✅ Live API |
 | Source integrity | SHA-256 of local scripts, repo URL check | ✅ Local |
